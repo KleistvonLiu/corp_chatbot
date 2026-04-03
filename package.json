@@ -1,0 +1,40 @@
+{
+  "name": "corp-chatbot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "tsx watch server/main.ts",
+    "dev:web": "vite",
+    "normalize:legacy": "tsx scripts/normalize-legacy-workbook.ts",
+    "build": "npm run build:server && npm run build:web",
+    "build:server": "tsup server/main.ts --format esm --out-dir dist/server --target node22 --clean",
+    "build:web": "vite build",
+    "start": "node dist/server/main.js",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "fast-xml-parser": "^5.3.0",
+    "jszip": "^3.10.1",
+    "multer": "^2.0.2",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^24.5.2",
+    "@types/react": "^19.1.13",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^5.0.2",
+    "concurrently": "^9.2.1",
+    "tsup": "^8.5.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.5",
+    "xlsx": "^0.18.5"
+  }
+}
