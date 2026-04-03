@@ -119,6 +119,11 @@ export interface ModelRequestDebug {
   body: string;
 }
 
+export interface AuthStatusResponse {
+  enabled: boolean;
+  authenticated: boolean;
+}
+
 export interface ImportResponse {
   jobId: string;
   knowledgeBaseId: string;

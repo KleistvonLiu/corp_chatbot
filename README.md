@@ -31,6 +31,14 @@ cp .env.example .env
 
 服务端现在会自动读取项目根目录下的 `.env`。
 
+如果你只是内部小范围使用，建议直接设置一个访问密码：
+
+```env
+APP_PASSWORD=请改成你自己的密码
+```
+
+设置后，网页会先显示一个密码页；只有输入正确密码后，才能继续访问知识库、导入文件和发起聊天。认证通过后，服务端会写入一个 `HttpOnly` cookie。
+
 推荐的本地 `vLLM + Qwen3.5-35B-A3B-FP8` 组合：
 
 ```env
@@ -71,6 +79,8 @@ npm run dev
 
 - 前端: `http://localhost:5173`
 - 后端: `http://localhost:3001`
+
+如果修改了 `APP_PASSWORD` 或其他 `.env` 配置，需要重启服务。
 
 ## 规范化知识库包
 

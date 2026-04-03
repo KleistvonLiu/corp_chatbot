@@ -3,6 +3,7 @@ import path from "node:path";
 import express from "express";
 import multer from "multer";
 import { answerQuestion, enqueueKnowledgeImport, getActiveKnowledgeResponse, getImportJob } from "./lib/knowledge";
+import { getAuthStatus, isAuthEnabled, isAuthenticated, loginWithPassword, logout, requireAuth, sendLoginPage } from "./lib/auth";
 import { ensureStorage } from "./lib/storage";
 
 const upload = multer({
@@ -25,6 +26,45 @@ export async function createApp() {
   await ensureStorage();
   const app = express();
   app.use(express.json({ limit: "1mb" }));
+
+  app.get("/api/auth/status", (request, response) => {
+    response.json(getAuthStatus(request));
+  });
+
+  app.post("/api/auth/login", (request, response) => {
+    const result = loginWithPassword(request, response);
+    if (!result.authenticated && result.enabled) {
+      response.json({ ...result, error: "访问密码错误。" });
+      return;
+    }
+
+    response.json(result);
+  });
+
+  app.post("/api/auth/logout", (_request, response) => {
+    response.json(logout(response));
+  });
+
+  app.use((request, response, next) => {
+    if (!isAuthEnabled() || isAuthenticated(request)) {
+      next();
+      return;
+    }
+
+    if (request.path.startsWith("/api/auth")) {
+      next();
+      return;
+    }
+
+    if (request.path.startsWith("/api")) {
+      response.status(401).json({ error: "请输入访问密码。" });
+      return;
+    }
+
+    sendLoginPage(response);
+  });
+
+  app.use("/api", requireAuth);
 
   app.get("/api/knowledge/active", async (_request, response, next) => {
     try {

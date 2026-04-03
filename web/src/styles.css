@@ -45,6 +45,37 @@ input {
   padding: 32px 0 40px;
 }
 
+.auth-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.auth-card {
+  width: min(480px, 100%);
+  padding: 34px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  backdrop-filter: blur(16px);
+  box-shadow: 0 22px 50px rgba(73, 48, 17, 0.08);
+}
+
+.password-form {
+  display: grid;
+  gap: 14px;
+  margin-top: 20px;
+}
+
+.password-form input {
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: rgba(255, 251, 245, 0.92);
+  padding: 14px 16px;
+  color: var(--ink);
+}
+
 .hero-panel {
   display: grid;
   grid-template-columns: 1.35fr 0.95fr;
@@ -96,6 +127,13 @@ input {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
+}
+
+.active-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
 }
 
 .active-card h2,
@@ -202,6 +240,17 @@ input {
 .primary-button:disabled {
   opacity: 0.65;
   cursor: default;
+}
+
+.ghost-button {
+  border: 1px solid rgba(156, 63, 25, 0.25);
+  border-radius: 14px;
+  padding: 10px 14px;
+  background: rgba(255, 251, 245, 0.75);
+  color: var(--accent);
+  cursor: pointer;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .warning-box {

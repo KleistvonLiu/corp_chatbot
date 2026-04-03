@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { Citation, ImportJobRecord, ModelRequestDebug, UnansweredQuestionRecord } from "../../shared/contracts";
-import { fetchActiveKnowledge, fetchJob, sendChat, uploadKnowledge } from "./api";
-import type { ActiveKnowledgeResponse } from "./types";
+import { ApiError, fetchActiveKnowledge, fetchAuthStatus, fetchJob, loginWithPassword, logout, sendChat, uploadKnowledge } from "./api";
+import type { ActiveKnowledgeResponse, AuthStatusResponse } from "./types";
 
 interface UiMessage {
   id: string;
@@ -39,7 +39,14 @@ function formatUnansweredReason(reason: UnansweredQuestionRecord["reason"]) {
   return reason === "insufficient_evidence" ? "未命中证据" : "模型拒答";
 }
 
+function formatErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
 export default function App() {
+  const [auth, setAuth] = useState<AuthStatusResponse | null>(null);
+  const [password, setPassword] = useState("");
+  const [authSubmitting, setAuthSubmitting] = useState(false);
   const [active, setActive] = useState<ActiveKnowledgeResponse | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -51,10 +58,14 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    void refreshActive();
+    void initializeApp();
   }, []);
 
   useEffect(() => {
+    if (auth?.enabled && !auth.authenticated) {
+      return;
+    }
+
     if (!job || job.status === "completed" || job.status === "failed") {
       return;
     }
@@ -65,8 +76,7 @@ export default function App() {
           setJob(next);
           if (next.status === "completed") {
             window.clearInterval(timer);
-            setSessionId(undefined);
-            setMessages([welcomeMessage]);
+            resetConversation();
             void refreshActive();
           }
           if (next.status === "failed") {
@@ -74,13 +84,60 @@ export default function App() {
           }
         })
         .catch((jobError) => {
-          setError(jobError instanceof Error ? jobError.message : "轮询导入任务失败");
+          if (handleApiError(jobError, "轮询导入任务失败")) {
+            window.clearInterval(timer);
+            return;
+          }
+
           window.clearInterval(timer);
         });
     }, 1500);
 
     return () => window.clearInterval(timer);
-  }, [job]);
+  }, [auth, job]);
+
+  function resetConversation() {
+    setSessionId(undefined);
+    setMessages([welcomeMessage]);
+  }
+
+  function markUnauthenticated() {
+    setAuth((current) => ({
+      enabled: current?.enabled ?? true,
+      authenticated: false
+    }));
+    setActive(null);
+    setJob(undefined);
+    setSelectedFile(null);
+    resetConversation();
+  }
+
+  function handleApiError(error: unknown, fallback: string) {
+    if (error instanceof ApiError && error.status === 401) {
+      markUnauthenticated();
+      setError("请输入访问密码。");
+      return true;
+    }
+
+    setError(formatErrorMessage(error, fallback));
+    return false;
+  }
+
+  async function initializeApp() {
+    try {
+      const status = await fetchAuthStatus();
+      setAuth(status);
+      if (!status.enabled || status.authenticated) {
+        await refreshActive();
+      }
+    } catch (authError) {
+      setAuth({
+        enabled: false,
+        authenticated: true
+      });
+      setError(formatErrorMessage(authError, "读取认证状态失败"));
+    }
+  }
 
   async function refreshActive() {
     try {
@@ -88,7 +145,45 @@ export default function App() {
       setActive(payload);
       setJob(payload.latestJob);
     } catch (activeError) {
-      setError(activeError instanceof Error ? activeError.message : "读取知识库状态失败");
+      handleApiError(activeError, "读取知识库状态失败");
+    }
+  }
+
+  async function handleLoginSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (!password.trim()) {
+      setError("请输入访问密码。");
+      return;
+    }
+
+    setError(null);
+    setAuthSubmitting(true);
+
+    try {
+      const status = await loginWithPassword(password);
+      setAuth(status);
+      setPassword("");
+      await refreshActive();
+    } catch (loginError) {
+      setError(formatErrorMessage(loginError, "登录失败"));
+    } finally {
+      setAuthSubmitting(false);
+    }
+  }
+
+  async function handleLogout() {
+    setError(null);
+
+    try {
+      const status = await logout();
+      setAuth(status);
+      setActive(null);
+      setJob(undefined);
+      setSelectedFile(null);
+      setPassword("");
+      resetConversation();
+    } catch (logoutError) {
+      setError(formatErrorMessage(logoutError, "退出失败"));
     }
   }
 
@@ -107,7 +202,7 @@ export default function App() {
       const nextJob = await fetchJob(result.jobId);
       setJob(nextJob);
     } catch (uploadError) {
-      setError(uploadError instanceof Error ? uploadError.message : "上传失败");
+      handleApiError(uploadError, "上传失败");
     } finally {
       setUploading(false);
     }
@@ -153,7 +248,10 @@ export default function App() {
         }
       ]);
     } catch (chatError) {
-      setError(chatError instanceof Error ? chatError.message : "发送消息失败");
+      if (!handleApiError(chatError, "发送消息失败")) {
+        setMessages((current) => current.filter((item) => item.id !== userMessage.id || item.role !== "user"));
+        setDraft(message);
+      }
     } finally {
       setSending(false);
     }
@@ -189,6 +287,47 @@ export default function App() {
     };
   }, [active]);
 
+  if (!auth) {
+    return (
+      <main className="auth-shell">
+        <section className="auth-card">
+          <p className="eyebrow">Corp Workflow Assistant</p>
+          <h1>正在加载</h1>
+          <p className="hero-text">正在读取访问状态和活动知识库。</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (auth.enabled && !auth.authenticated) {
+    return (
+      <main className="auth-shell">
+        <section className="auth-card">
+          <p className="eyebrow">Protected Access</p>
+          <h1>输入访问密码</h1>
+          <p className="hero-text">这个页面已加密码，仅供内部小范围使用。</p>
+
+          <form className="password-form" onSubmit={handleLoginSubmit}>
+            <input
+              type="password"
+              placeholder="访问密码"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete="current-password"
+              disabled={authSubmitting}
+              autoFocus
+            />
+            <button className="primary-button" disabled={authSubmitting || !password.trim()}>
+              {authSubmitting ? "验证中..." : "进入系统"}
+            </button>
+          </form>
+
+          {error ? <p className="error-text">{error}</p> : null}
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="app-shell">
       <section className="hero-panel">
@@ -201,9 +340,18 @@ export default function App() {
         </div>
 
         <div className="active-card">
-          <h2>活动知识库</h2>
-          <p className="active-title">{kbCard.headline}</p>
-          <p className="active-subline">{kbCard.subline}</p>
+          <div className="active-card-top">
+            <div>
+              <h2>活动知识库</h2>
+              <p className="active-title">{kbCard.headline}</p>
+              <p className="active-subline">{kbCard.subline}</p>
+            </div>
+            {auth.enabled ? (
+              <button type="button" className="ghost-button" onClick={handleLogout}>
+                退出
+              </button>
+            ) : null}
+          </div>
           <p className="status-pill">{formatJobStatus(job)}</p>
           <div className="stats-block">
             <p className="stats-title">{statsCard.headline}</p>
@@ -308,7 +456,7 @@ export default function App() {
                         本次未调用模型。
                         {message.providerMode?.startsWith("chat:offline")
                           ? " 当前聊天 provider 为 offline。"
-                          : " 如果这次是证据不足，后端会直接拒答，不会发送模型请求。"}
+                          : " 后端已直接返回拒答文案，没有发送模型请求。"}
                       </p>
                     )}
                   </details>
