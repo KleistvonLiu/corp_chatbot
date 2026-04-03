@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import type { Citation, ImportJobRecord, ModelRequestDebug, UnansweredQuestionRecord } from "../../shared/contracts";
-import { ApiError, fetchActiveKnowledge, fetchAuthStatus, fetchJob, loginWithPassword, logout, sendChat, uploadKnowledge } from "./api";
+import type { Citation, ModelRequestDebug, UnansweredQuestionRecord } from "../../shared/contracts";
+import { ApiError, fetchActiveKnowledge, fetchAuthStatus, loginWithPassword, logout, sendChat } from "./api";
 import type { ActiveKnowledgeResponse, AuthStatusResponse } from "./types";
 
 interface UiMessage {
@@ -15,25 +15,8 @@ interface UiMessage {
 const welcomeMessage: UiMessage = {
   id: "welcome",
   role: "assistant",
-  content:
-    "上传流程 Excel 或规范化知识库 zip 后，我会解析主表和附件，再根据检索到的证据回答问题。每次回答都会附上引用来源。"
+  content: "我是 E小助，会基于固定流程知识库和附件证据回答问题，并附上引用来源。"
 };
-
-function formatJobStatus(job?: ImportJobRecord): string {
-  if (!job) {
-    return "尚未导入知识库";
-  }
-
-  if (job.status === "completed") {
-    return `导入完成，已解析 ${job.sourceCount} 条来源 / ${job.chunkCount} 个检索块`;
-  }
-
-  if (job.status === "failed") {
-    return `导入失败：${job.error ?? "未知错误"}`;
-  }
-
-  return "知识库正在导入中";
-}
 
 function formatUnansweredReason(reason: UnansweredQuestionRecord["reason"]) {
   return reason === "insufficient_evidence" ? "未命中证据" : "模型拒答";
@@ -43,14 +26,19 @@ function formatErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
+function toDisplayName(filePath?: string) {
+  if (!filePath) {
+    return "未配置";
+  }
+
+  return filePath.split(/[\\/]/).filter(Boolean).pop() ?? filePath;
+}
+
 export default function App() {
   const [auth, setAuth] = useState<AuthStatusResponse | null>(null);
   const [password, setPassword] = useState("");
   const [authSubmitting, setAuthSubmitting] = useState(false);
   const [active, setActive] = useState<ActiveKnowledgeResponse | null>(null);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [job, setJob] = useState<ImportJobRecord | undefined>(undefined);
   const [messages, setMessages] = useState<UiMessage[]>([welcomeMessage]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -60,41 +48,6 @@ export default function App() {
   useEffect(() => {
     void initializeApp();
   }, []);
-
-  useEffect(() => {
-    if (auth?.enabled && !auth.authenticated) {
-      return;
-    }
-
-    if (!job || job.status === "completed" || job.status === "failed") {
-      return;
-    }
-
-    const timer = window.setInterval(() => {
-      void fetchJob(job.jobId)
-        .then((next) => {
-          setJob(next);
-          if (next.status === "completed") {
-            window.clearInterval(timer);
-            resetConversation();
-            void refreshActive();
-          }
-          if (next.status === "failed") {
-            window.clearInterval(timer);
-          }
-        })
-        .catch((jobError) => {
-          if (handleApiError(jobError, "轮询导入任务失败")) {
-            window.clearInterval(timer);
-            return;
-          }
-
-          window.clearInterval(timer);
-        });
-    }, 1500);
-
-    return () => window.clearInterval(timer);
-  }, [auth, job]);
 
   function resetConversation() {
     setSessionId(undefined);
@@ -107,8 +60,6 @@ export default function App() {
       authenticated: false
     }));
     setActive(null);
-    setJob(undefined);
-    setSelectedFile(null);
     resetConversation();
   }
 
@@ -143,7 +94,6 @@ export default function App() {
     try {
       const payload = await fetchActiveKnowledge();
       setActive(payload);
-      setJob(payload.latestJob);
     } catch (activeError) {
       handleApiError(activeError, "读取知识库状态失败");
     }
@@ -178,33 +128,10 @@ export default function App() {
       const status = await logout();
       setAuth(status);
       setActive(null);
-      setJob(undefined);
-      setSelectedFile(null);
       setPassword("");
       resetConversation();
     } catch (logoutError) {
       setError(formatErrorMessage(logoutError, "退出失败"));
-    }
-  }
-
-  async function handleUpload(event: FormEvent) {
-    event.preventDefault();
-    if (!selectedFile) {
-      setError("请先选择 Excel 文件");
-      return;
-    }
-
-    setError(null);
-    setUploading(true);
-
-    try {
-      const result = await uploadKnowledge(selectedFile);
-      const nextJob = await fetchJob(result.jobId);
-      setJob(nextJob);
-    } catch (uploadError) {
-      handleApiError(uploadError, "上传失败");
-    } finally {
-      setUploading(false);
     }
   }
 
@@ -257,17 +184,36 @@ export default function App() {
     }
   }
 
-  const kbCard = useMemo(() => {
+  const knowledgeCard = useMemo(() => {
     if (!active?.knowledgeBase) {
       return {
         headline: "当前没有活动知识库",
-        subline: "上传 Excel 后会在这里显示版本信息。"
+        subline: "请检查固定知识源配置和启动日志。"
       };
     }
 
     return {
       headline: active.knowledgeBase.originalFileName,
       subline: `版本时间 ${new Date(active.knowledgeBase.importedAt).toLocaleString("zh-CN")} · ${active.knowledgeBase.sourceCount} 条来源 · ${active.knowledgeBase.chunkCount} 个检索块`
+    };
+  }, [active]);
+
+  const sourceCard = useMemo(() => {
+    const fixedSource = active?.fixedSource;
+    if (!fixedSource?.configured) {
+      return {
+        title: "固定知识源未配置",
+        subline: "请在 .env 中设置 KNOWLEDGE_SOURCE_WORKBOOK_PATH 和 KNOWLEDGE_SOURCE_ATTACHMENTS_DIR。",
+        error: undefined as string | undefined
+      };
+    }
+
+    return {
+      title: toDisplayName(fixedSource.workbookPath),
+      subline: fixedSource.lastSyncAt
+        ? `最近同步 ${new Date(fixedSource.lastSyncAt).toLocaleString("zh-CN")} · 附件目录 ${toDisplayName(fixedSource.attachmentsDir)}`
+        : `附件目录 ${toDisplayName(fixedSource.attachmentsDir)}`,
+      error: fixedSource.syncError
     };
   }, [active]);
 
@@ -291,9 +237,9 @@ export default function App() {
     return (
       <main className="auth-shell">
         <section className="auth-card">
-          <p className="eyebrow">Corp Workflow Assistant</p>
+          <p className="eyebrow">E小助</p>
           <h1>正在加载</h1>
-          <p className="hero-text">正在读取访问状态和活动知识库。</p>
+          <p className="hero-text">正在读取访问状态和固定知识库。</p>
         </section>
       </main>
     );
@@ -303,9 +249,9 @@ export default function App() {
     return (
       <main className="auth-shell">
         <section className="auth-card">
-          <p className="eyebrow">Protected Access</p>
+          <p className="eyebrow">E小助</p>
           <h1>输入访问密码</h1>
-          <p className="hero-text">这个页面已加密码，仅供内部小范围使用。</p>
+          <p className="hero-text">E小助 已加密码，仅供内部小范围使用。</p>
 
           <form className="password-form" onSubmit={handleLoginSubmit}>
             <input
@@ -318,7 +264,7 @@ export default function App() {
               autoFocus
             />
             <button className="primary-button" disabled={authSubmitting || !password.trim()}>
-              {authSubmitting ? "验证中..." : "进入系统"}
+              {authSubmitting ? "验证中..." : "进入 E小助"}
             </button>
           </form>
 
@@ -332,19 +278,17 @@ export default function App() {
     <main className="app-shell">
       <section className="hero-panel">
         <div className="hero-copy">
-          <p className="eyebrow">Corp Workflow Assistant</p>
-          <h1>把流程汇总表变成可追溯的本地问答机器人</h1>
-          <p className="hero-text">
-            上传新版 Excel 后，系统会解析主表、内嵌 Word / PowerPoint / Excel 附件，并基于证据回答问题。
-          </p>
+          <p className="eyebrow">E小助</p>
+          <h1>固定流程知识库问答助手</h1>
+          <p className="hero-text">E小助 会在服务启动时自动同步固定知识源，并基于主表和附件证据回答问题。</p>
         </div>
 
         <div className="active-card">
           <div className="active-card-top">
             <div>
               <h2>活动知识库</h2>
-              <p className="active-title">{kbCard.headline}</p>
-              <p className="active-subline">{kbCard.subline}</p>
+              <p className="active-title">{knowledgeCard.headline}</p>
+              <p className="active-subline">{knowledgeCard.subline}</p>
             </div>
             {auth.enabled ? (
               <button type="button" className="ghost-button" onClick={handleLogout}>
@@ -352,7 +296,12 @@ export default function App() {
               </button>
             ) : null}
           </div>
-          <p className="status-pill">{formatJobStatus(job)}</p>
+          <div className="stats-block">
+            <p className="stats-title">固定知识源</p>
+            <p className="stats-subline">{sourceCard.title}</p>
+            <p className="stats-subline">{sourceCard.subline}</p>
+            {sourceCard.error ? <p className="error-text">{sourceCard.error}</p> : null}
+          </div>
           <div className="stats-block">
             <p className="stats-title">{statsCard.headline}</p>
             <p className="stats-subline">{statsCard.subline}</p>
@@ -360,37 +309,12 @@ export default function App() {
         </div>
       </section>
 
-      <section className="workspace-grid">
+      <section className="workspace-grid single-pane">
         <aside className="import-panel">
           <div className="panel-header">
-            <h2>导入知识库</h2>
-            <p>支持上传旧版 Excel 或规范化知识库 zip。导入成功后，新对话会自动绑定到最新版本。</p>
+            <h2>系统说明</h2>
+            <p>知识库更新方式已固定。请替换服务端配置的 Excel 和附件目录后重启服务，不再支持网页上传。</p>
           </div>
-
-          <form className="upload-form" onSubmit={handleUpload}>
-            <label className="file-dropzone">
-              <span>选择 `.xlsx` 或 `.zip` 文件</span>
-              <input
-                type="file"
-                accept=".xlsx,.zip"
-                onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
-              />
-              <strong>{selectedFile?.name ?? "未选择文件"}</strong>
-            </label>
-
-            <button className="primary-button" disabled={uploading}>
-              {uploading ? "上传中..." : "开始导入"}
-            </button>
-          </form>
-
-          {job?.warnings.length ? (
-            <div className="warning-box">
-              <h3>导入提示</h3>
-              {job.warnings.map((warning) => (
-                <p key={warning}>{warning}</p>
-              ))}
-            </div>
-          ) : null}
 
           {active?.questionStats?.recentUnanswered.length ? (
             <div className="warning-box">
@@ -412,14 +336,14 @@ export default function App() {
 
         <section className="chat-panel">
           <div className="panel-header">
-            <h2>聊天窗口</h2>
-            <p>问法可以自然一些，例如“安装新软件要走什么单？”</p>
+            <h2>E小助 对话窗口</h2>
+            <p>例如“安装新软件要走什么单？”、“软件测试找谁？”</p>
           </div>
 
           <div className="message-list">
             {messages.map((message) => (
               <article key={message.id} className={`message-card ${message.role}`}>
-                <p className="message-role">{message.role === "assistant" ? "助手" : "你"}</p>
+                <p className="message-role">{message.role === "assistant" ? "E小助" : "你"}</p>
                 <p className="message-content">{message.content}</p>
 
                 {message.citations?.length ? (

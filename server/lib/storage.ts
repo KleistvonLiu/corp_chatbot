@@ -3,6 +3,7 @@ import path from "node:path";
 import type {
   ActiveKnowledgeResponse,
   ChatSession,
+  FixedKnowledgeSourceStatus,
   ImportJobRecord,
   KnowledgeBaseRecord,
   QuestionStatsRecord
@@ -11,6 +12,7 @@ import type {
 interface AppState {
   activeKnowledgeBaseId?: string;
   latestJobId?: string;
+  fixedSource?: FixedKnowledgeSourceStatus;
 }
 
 const rootDir = process.cwd();
@@ -250,6 +252,7 @@ export async function buildActiveKnowledgeResponse(): Promise<ActiveKnowledgeRes
         }
       : undefined,
     latestJob: latestJob ?? undefined,
-    questionStats: knowledgeBase ? await loadQuestionStats(knowledgeBase.knowledgeBaseId) : undefined
+    questionStats: knowledgeBase ? await loadQuestionStats(knowledgeBase.knowledgeBaseId) : undefined,
+    fixedSource: state.fixedSource
   };
 }

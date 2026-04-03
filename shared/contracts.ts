@@ -80,6 +80,7 @@ export interface ActiveKnowledgeResponse {
   knowledgeBase?: Omit<KnowledgeBaseRecord, "sources" | "chunks">;
   latestJob?: ImportJobRecord;
   questionStats?: QuestionStatsRecord;
+  fixedSource?: FixedKnowledgeSourceStatus;
 }
 
 export interface ChatMessage {
@@ -122,6 +123,15 @@ export interface ModelRequestDebug {
 export interface AuthStatusResponse {
   enabled: boolean;
   authenticated: boolean;
+}
+
+export interface FixedKnowledgeSourceStatus {
+  configured: boolean;
+  workbookPath?: string;
+  attachmentsDir?: string;
+  lastSyncAt?: string;
+  lastSyncFingerprint?: string;
+  syncError?: string;
 }
 
 export interface ImportResponse {

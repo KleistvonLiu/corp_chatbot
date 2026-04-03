@@ -1,9 +1,7 @@
 import type {
   ActiveKnowledgeResponse,
   AuthStatusResponse,
-  ChatResponseBody,
-  ImportJobRecord,
-  ImportResponse
+  ChatResponseBody
 } from "./types";
 
 export class ApiError extends Error {
@@ -51,22 +49,6 @@ export async function logout(): Promise<AuthStatusResponse> {
 
 export async function fetchActiveKnowledge(): Promise<ActiveKnowledgeResponse> {
   return parseJson<ActiveKnowledgeResponse>(await fetch("/api/knowledge/active"));
-}
-
-export async function uploadKnowledge(file: File): Promise<ImportResponse> {
-  const formData = new FormData();
-  formData.append("file", file);
-
-  return parseJson<ImportResponse>(
-    await fetch("/api/knowledge/import", {
-      method: "POST",
-      body: formData
-    })
-  );
-}
-
-export async function fetchJob(jobId: string): Promise<ImportJobRecord> {
-  return parseJson<ImportJobRecord>(await fetch(`/api/knowledge/jobs/${jobId}`));
 }
 
 export async function sendChat(message: string, sessionId?: string): Promise<ChatResponseBody> {

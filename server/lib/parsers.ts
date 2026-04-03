@@ -1,3 +1,4 @@
+import { promises as fs } from "node:fs";
 import path from "node:path";
 import JSZip from "jszip";
 import { XMLParser } from "fast-xml-parser";
@@ -44,6 +45,13 @@ interface ParsedWorkflowWorkbook {
   versionNotes?: string;
   sources: KnowledgeSource[];
   warnings: string[];
+}
+
+interface ParsedCanonicalWorkbookParts {
+  workbook: ParsedWorkbook;
+  flowSheet: WorkbookSheet;
+  versionSheet?: WorkbookSheet;
+  attachmentSheet: WorkbookSheet;
 }
 
 type RelationshipMap = Map<string, { type: string; target: string }>;
@@ -574,38 +582,83 @@ function parseAliases(rawValue: string) {
     .filter(Boolean);
 }
 
-function readCanonicalEntryType(rawValue: string, sheetRowIndex: number): EntryType {
+function readCanonicalEntryType(rawValue: string, sheetRowIndex: number, warnings?: string[]): EntryType {
   const value = normalizeSingleLine(rawValue);
   if (value === "流程" || value === "联系人" || value === "供应商" || value === "参考" || value === "系统链接") {
     return value;
   }
 
+  if (warnings) {
+    warnings.push(`流程汇总 sheet 第 ${sheetRowIndex} 行的“条目类型”无效：${value || "空值"}，已按“流程”处理。`);
+    return "流程";
+  }
+
   throw new Error(`流程汇总 sheet 第 ${sheetRowIndex} 行的“条目类型”无效：${value || "空值"}`);
 }
 
-async function parseCanonicalWorkflowPackage(
-  buffer: Buffer,
-  knowledgeBaseId: string
-): Promise<ParsedWorkflowWorkbook> {
-  const packageZip = await JSZip.loadAsync(buffer);
-  const workbookEntry = packageZip.file("knowledge.xlsx");
-  if (!workbookEntry) {
-    throw new Error("规范化 zip 包根目录缺少 knowledge.xlsx。");
+function extractAttachmentRelativePaths(attachmentSheet: WorkbookSheet) {
+  const paths: string[] = [];
+
+  for (const row of attachmentSheet.rows) {
+    if (row.sheetRowIndex === 1) {
+      continue;
+    }
+
+    const hasContent = ["A", "B", "C", "D", "E"].some((column) => Boolean(normalizeSpace(row.cells.get(column) ?? "")));
+    if (!hasContent) {
+      continue;
+    }
+
+    const relativePath = normalizeSingleLine((row.cells.get("C") ?? "").replace(/\\/g, "/"));
+    if (relativePath) {
+      paths.push(relativePath);
+    }
   }
 
-  const workbookBuffer = await workbookEntry.async("nodebuffer");
-  const workbook = await parseWorkbook(await JSZip.loadAsync(workbookBuffer));
+  return paths;
+}
+
+function normalizeAttachmentRelativePath(relativePath: string) {
+  return normalizeSingleLine(relativePath.replace(/\\/g, "/"));
+}
+
+export function resolveCanonicalAttachmentPath(attachmentsDir: string, relativePath: string) {
+  const normalized = normalizeAttachmentRelativePath(relativePath);
+  const segments = normalized.split("/").filter(Boolean);
+  const trimmedSegments =
+    path.basename(attachmentsDir).toLowerCase() === "attachments" && segments[0]?.toLowerCase() === "attachments"
+      ? segments.slice(1)
+      : segments;
+
+  return path.join(attachmentsDir, ...trimmedSegments);
+}
+
+async function parseCanonicalWorkbookParts(workbook: ParsedWorkbook): Promise<ParsedCanonicalWorkbookParts> {
   const flowSheet = workbook.sheets.find((sheet) => sheet.name === "流程汇总");
   const versionSheet = workbook.sheets.find((sheet) => sheet.name === "版本说明");
   const attachmentSheet = workbook.sheets.find((sheet) => sheet.name === "附件清单");
 
   if (!flowSheet) {
-    throw new Error("knowledge.xlsx 中缺少名为“流程汇总”的 sheet。");
+    throw new Error("规范化工作簿中缺少名为“流程汇总”的 sheet。");
   }
   if (!attachmentSheet) {
-    throw new Error("knowledge.xlsx 中缺少名为“附件清单”的 sheet。");
+    throw new Error("规范化工作簿中缺少名为“附件清单”的 sheet。");
   }
 
+  return {
+    workbook,
+    flowSheet,
+    versionSheet,
+    attachmentSheet
+  };
+}
+
+async function buildCanonicalSources(
+  knowledgeBaseId: string,
+  canonical: ParsedCanonicalWorkbookParts,
+  readAttachment: (relativePath: string, attachmentName: string) => Promise<Buffer>
+): Promise<ParsedWorkflowWorkbook> {
+  const { workbook, flowSheet, versionSheet, attachmentSheet } = canonical;
   const warnings: string[] = [];
   const sources: KnowledgeSource[] = [];
   const parentRowSourceIds = new Map<number, string>();
@@ -639,7 +692,7 @@ async function parseCanonicalWorkflowPackage(
       throw new Error(`流程汇总 sheet 第 ${row.sheetRowIndex} 行缺少“一级分类”。`);
     }
 
-    const entryType = readCanonicalEntryType(row.cells.get("C") ?? "", row.sheetRowIndex);
+    const entryType = readCanonicalEntryType(row.cells.get("C") ?? "", row.sheetRowIndex, warnings);
     const title = normalizeSingleLine(row.cells.get("D") ?? "");
     if (!title) {
       throw new Error(`流程汇总 sheet 第 ${row.sheetRowIndex} 行缺少“标题”。`);
@@ -740,7 +793,7 @@ async function parseCanonicalWorkflowPackage(
     }
 
     const attachmentName = normalizeSingleLine(row.cells.get("B") ?? "");
-    const relativePath = normalizeSingleLine((row.cells.get("C") ?? "").replace(/\\/g, "/"));
+    const relativePath = normalizeAttachmentRelativePath(row.cells.get("C") ?? "");
     const attachmentDescription = normalizeSpace(row.cells.get("E") ?? "");
     if (!attachmentName) {
       throw new Error(`附件清单 sheet 第 ${row.sheetRowIndex} 行缺少“附件文件名”。`);
@@ -753,12 +806,8 @@ async function parseCanonicalWorkflowPackage(
     }
     seenAttachmentPaths.add(relativePath);
 
-    const attachmentEntry = packageZip.file(relativePath);
-    if (!attachmentEntry) {
-      throw new Error(`附件清单引用的文件不存在：${relativePath}`);
-    }
-
-    const attachment = await parseEmbeddedAttachment(await attachmentEntry.async("nodebuffer"), attachmentName);
+    const attachmentBuffer = await readAttachment(relativePath, attachmentName);
+    const attachment = await parseEmbeddedAttachment(attachmentBuffer, attachmentName);
     if (attachment.warning) {
       warnings.push(attachment.warning);
     }
@@ -790,12 +839,70 @@ async function parseCanonicalWorkflowPackage(
   };
 }
 
+export async function collectCanonicalAttachmentReferences(buffer: Buffer) {
+  const workbook = await parseWorkbook(await JSZip.loadAsync(buffer));
+  const canonical = await parseCanonicalWorkbookParts(workbook);
+  return extractAttachmentRelativePaths(canonical.attachmentSheet);
+}
+
+async function parseCanonicalWorkflowPackage(
+  buffer: Buffer,
+  knowledgeBaseId: string
+): Promise<ParsedWorkflowWorkbook> {
+  const packageZip = await JSZip.loadAsync(buffer);
+  const workbookEntry = packageZip.file("knowledge.xlsx");
+  if (!workbookEntry) {
+    throw new Error("规范化 zip 包根目录缺少 knowledge.xlsx。");
+  }
+
+  const workbookBuffer = await workbookEntry.async("nodebuffer");
+  const workbook = await parseWorkbook(await JSZip.loadAsync(workbookBuffer));
+  const canonical = await parseCanonicalWorkbookParts(workbook);
+  return buildCanonicalSources(knowledgeBaseId, canonical, async (relativePath) => {
+    const attachmentEntry = packageZip.file(relativePath);
+    if (!attachmentEntry) {
+      throw new Error(`附件清单引用的文件不存在：${relativePath}`);
+    }
+    return attachmentEntry.async("nodebuffer");
+  });
+}
+
+async function parseCanonicalWorkflowWorkbookFromXlsx(
+  buffer: Buffer,
+  knowledgeBaseId: string,
+  attachmentsDir: string
+): Promise<ParsedWorkflowWorkbook> {
+  const workbook = await parseWorkbook(await JSZip.loadAsync(buffer));
+  const canonical = await parseCanonicalWorkbookParts(workbook);
+  return buildCanonicalSources(knowledgeBaseId, canonical, async (relativePath, attachmentName) => {
+    const attachmentPath = resolveCanonicalAttachmentPath(attachmentsDir, relativePath);
+    try {
+      return await fs.readFile(attachmentPath);
+    } catch (error) {
+      const isMissing = error instanceof Error && "code" in error && error.code === "ENOENT";
+      if (isMissing) {
+        throw new Error(`附件清单引用的文件不存在：${relativePath} -> ${attachmentPath}`);
+      }
+      throw new Error(`读取附件失败：${attachmentName} -> ${attachmentPath}`);
+    }
+  });
+}
+
 export async function parseWorkflowWorkbook(
   buffer: Buffer,
   knowledgeBaseId: string,
-  fileName = "workflow.xlsx"
+  fileName = "workflow.xlsx",
+  options?: {
+    canonicalAttachmentsDir?: string;
+  }
 ): Promise<ParsedWorkflowWorkbook> {
-  return isZipFileName(fileName)
-    ? parseCanonicalWorkflowPackage(buffer, knowledgeBaseId)
-    : parseLegacyWorkflowWorkbook(buffer, knowledgeBaseId);
+  if (isZipFileName(fileName)) {
+    return parseCanonicalWorkflowPackage(buffer, knowledgeBaseId);
+  }
+
+  if (options?.canonicalAttachmentsDir) {
+    return parseCanonicalWorkflowWorkbookFromXlsx(buffer, knowledgeBaseId, options.canonicalAttachmentsDir);
+  }
+
+  return parseLegacyWorkflowWorkbook(buffer, knowledgeBaseId);
 }

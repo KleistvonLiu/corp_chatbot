@@ -1,9 +1,12 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import type {
   ChatMessage,
   ChatSession,
   Citation,
   EntryType,
+  FixedKnowledgeSourceStatus,
   ImportJobRecord,
   KnowledgeBaseRecord,
   KnowledgeChunk,
@@ -30,7 +33,7 @@ import {
   writeUploadFile
 } from "./storage";
 import { createAnswerProvider, createProvider, cosineSimilarity, extractDirectMatchTerms, extractKeywords } from "./providers";
-import { parseWorkflowWorkbook } from "./parsers";
+import { collectCanonicalAttachmentReferences, parseWorkflowWorkbook, resolveCanonicalAttachmentPath } from "./parsers";
 
 interface SearchHit {
   chunk: KnowledgeChunk;
@@ -45,6 +48,8 @@ interface ChunkMetadata {
 
 const noEvidenceAnswer =
   "当前知识库里没有找到足够依据来回答这个问题。请换一个更具体的问法，或者先补充相关流程文档。";
+const defaultFixedWorkbookPath = "/home/kleist/Downloads/Data.xlsx";
+const defaultFixedAttachmentsDir = "/home/kleist/Downloads/流程教程知识库规范包_20260402(1)/attachments";
 const topicActionPattern = /怎么|如何|谁|联系|申请|审批|安装|报价|区别|对比|比较|差异|流程|购买|下单|负责/u;
 const procurementIntentPattern = /买|购买|采购|报价|下单/u;
 const referenceLookupPattern = /供应商|联系人|列表|系统链接|参考/u;
@@ -70,6 +75,41 @@ function clip(text: string, limit = 220) {
     return normalized;
   }
   return `${normalized.slice(0, limit - 1)}…`;
+}
+
+function readConfiguredFixedSource(): FixedKnowledgeSourceStatus {
+  const workbookPath = process.env.KNOWLEDGE_SOURCE_WORKBOOK_PATH?.trim() || defaultFixedWorkbookPath;
+  const attachmentsDir = process.env.KNOWLEDGE_SOURCE_ATTACHMENTS_DIR?.trim() || defaultFixedAttachmentsDir;
+  return {
+    configured: Boolean(workbookPath),
+    workbookPath: workbookPath || undefined,
+    attachmentsDir: attachmentsDir || undefined
+  };
+}
+
+function fingerprintBuffer(hash: ReturnType<typeof createHash>, label: string, buffer: Buffer) {
+  hash.update(label);
+  hash.update("\0");
+  hash.update(buffer);
+  hash.update("\0");
+}
+
+async function computeFixedSourceFingerprint(workbookPath: string, attachmentsDir: string) {
+  const workbookBuffer = await fs.readFile(workbookPath);
+  const attachmentRefs = await collectCanonicalAttachmentReferences(workbookBuffer);
+  const hash = createHash("sha256");
+  fingerprintBuffer(hash, "workbook", workbookBuffer);
+
+  for (const relativePath of [...new Set(attachmentRefs)].sort()) {
+    const attachmentPath = resolveCanonicalAttachmentPath(attachmentsDir, relativePath);
+    const attachmentBuffer = await fs.readFile(attachmentPath);
+    fingerprintBuffer(hash, relativePath, attachmentBuffer);
+  }
+
+  return {
+    fingerprint: hash.digest("hex"),
+    workbookBuffer
+  };
 }
 
 function parseDelimitedList(text: string) {
@@ -364,6 +404,33 @@ async function buildKnowledgeChunks(
   }));
 }
 
+async function saveActivatedKnowledgeBase(
+  knowledgeBaseId: string,
+  originalFileName: string,
+  storedFileName: string,
+  parsed: Awaited<ReturnType<typeof parseWorkflowWorkbook>>,
+  providerMode = createProvider().mode
+) {
+  const chunks = await buildKnowledgeChunks(knowledgeBaseId, parsed.sources, providerMode);
+  const knowledgeBase: KnowledgeBaseRecord = {
+    knowledgeBaseId,
+    originalFileName,
+    storedFileName,
+    importedAt: new Date().toISOString(),
+    providerMode,
+    sourceCount: parsed.sources.length,
+    chunkCount: chunks.length,
+    versionNotes: parsed.versionNotes,
+    sheets: parsed.sheets,
+    sources: parsed.sources,
+    chunks,
+    warnings: parsed.warnings
+  };
+
+  await saveKnowledgeBase(knowledgeBase);
+  return knowledgeBase;
+}
+
 export async function enqueueKnowledgeImport(fileName: string, buffer: Buffer) {
   await ensureStorage();
   const knowledgeBaseId = randomUUID();
@@ -397,30 +464,19 @@ async function runKnowledgeImport(params: {
     job.status = "running";
     await saveJob(job);
 
-    const provider = createProvider();
     const parsed = await parseWorkflowWorkbook(buffer, job.knowledgeBaseId, originalFileName);
-    const chunks = await buildKnowledgeChunks(job.knowledgeBaseId, parsed.sources, provider.mode);
-
-    const knowledgeBase: KnowledgeBaseRecord = {
-      knowledgeBaseId: job.knowledgeBaseId,
+    const provider = createProvider();
+    const knowledgeBase = await saveActivatedKnowledgeBase(
+      job.knowledgeBaseId,
       originalFileName,
       storedFileName,
-      importedAt: new Date().toISOString(),
-      providerMode: provider.mode,
-      sourceCount: parsed.sources.length,
-      chunkCount: chunks.length,
-      versionNotes: parsed.versionNotes,
-      sheets: parsed.sheets,
-      sources: parsed.sources,
-      chunks,
-      warnings: parsed.warnings
-    };
-
-    await saveKnowledgeBase(knowledgeBase);
+      parsed,
+      provider.mode
+    );
     job.status = "completed";
-    job.sourceCount = parsed.sources.length;
-    job.chunkCount = chunks.length;
-    job.warnings = parsed.warnings;
+    job.sourceCount = knowledgeBase.sourceCount;
+    job.chunkCount = knowledgeBase.chunkCount;
+    job.warnings = knowledgeBase.warnings;
     await saveJob(job);
 
     const state = await loadState();
@@ -433,6 +489,98 @@ async function runKnowledgeImport(params: {
     job.status = "failed";
     job.error = error instanceof Error ? error.message : "导入知识库时发生未知错误";
     await saveJob(job);
+  }
+}
+
+export async function syncConfiguredKnowledgeBase() {
+  await ensureStorage();
+  const fixedSource = readConfiguredFixedSource();
+  const state = await loadState();
+
+  if (!fixedSource.configured || !fixedSource.workbookPath || !fixedSource.attachmentsDir) {
+    if (state.fixedSource?.configured) {
+      await saveState({
+        ...state,
+        fixedSource
+      });
+    }
+
+    return {
+      status: "disabled" as const
+    };
+  }
+
+  try {
+    const { fingerprint, workbookBuffer } = await computeFixedSourceFingerprint(
+      fixedSource.workbookPath,
+      fixedSource.attachmentsDir
+    );
+
+    if (state.fixedSource?.lastSyncFingerprint === fingerprint && state.activeKnowledgeBaseId) {
+      await saveState({
+        ...state,
+        fixedSource: {
+          ...fixedSource,
+          lastSyncFingerprint: fingerprint,
+          lastSyncAt: state.fixedSource?.lastSyncAt,
+          syncError: undefined
+        }
+      });
+
+      return {
+        status: "unchanged" as const,
+        knowledgeBaseId: state.activeKnowledgeBaseId
+      };
+    }
+
+    const knowledgeBaseId = randomUUID();
+    const parsed = await parseWorkflowWorkbook(
+      workbookBuffer,
+      knowledgeBaseId,
+      path.basename(fixedSource.workbookPath),
+      {
+        canonicalAttachmentsDir: fixedSource.attachmentsDir
+      }
+    );
+    const knowledgeBase = await saveActivatedKnowledgeBase(
+      knowledgeBaseId,
+      path.basename(fixedSource.workbookPath),
+      `fixed-${path.basename(fixedSource.workbookPath)}`,
+      parsed
+    );
+
+    await saveState({
+      ...state,
+      activeKnowledgeBaseId: knowledgeBase.knowledgeBaseId,
+      fixedSource: {
+        ...fixedSource,
+        lastSyncFingerprint: fingerprint,
+        lastSyncAt: new Date().toISOString(),
+        syncError: undefined
+      }
+    });
+
+    return {
+      status: "synced" as const,
+      knowledgeBaseId: knowledgeBase.knowledgeBaseId,
+      sourceCount: knowledgeBase.sourceCount,
+      chunkCount: knowledgeBase.chunkCount
+    };
+  } catch (error) {
+    const syncError = error instanceof Error ? error.message : "固定知识库同步失败";
+    await saveState({
+      ...state,
+      fixedSource: {
+        ...fixedSource,
+        syncError,
+        lastSyncAt: new Date().toISOString()
+      }
+    });
+
+    return {
+      status: "failed" as const,
+      error: syncError
+    };
   }
 }
 
@@ -773,12 +921,12 @@ export async function answerQuestion(message: string, sessionId?: string) {
 
   const knowledgeBaseId = session?.knowledgeBaseId ?? state.activeKnowledgeBaseId;
   if (!knowledgeBaseId) {
-    throw new Error("当前没有活动知识库，请先上传并导入 Excel 文件。");
+    throw new Error("当前没有活动知识库，请检查固定知识源配置。");
   }
 
   const knowledgeBase = await loadKnowledgeBase(knowledgeBaseId);
   if (!knowledgeBase) {
-    throw new Error("活动知识库文件不存在，请重新导入。");
+    throw new Error("活动知识库文件不存在，请检查固定知识源同步。");
   }
 
   const answerProvider = createAnswerProvider(knowledgeBase.providerMode);

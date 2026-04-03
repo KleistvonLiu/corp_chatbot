@@ -1,26 +1,9 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import express from "express";
-import multer from "multer";
-import { answerQuestion, enqueueKnowledgeImport, getActiveKnowledgeResponse, getImportJob } from "./lib/knowledge";
+import { answerQuestion, getActiveKnowledgeResponse, getImportJob } from "./lib/knowledge";
 import { getAuthStatus, isAuthEnabled, isAuthenticated, loginWithPassword, logout, requireAuth, sendLoginPage } from "./lib/auth";
 import { ensureStorage } from "./lib/storage";
-
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: {
-    fileSize: 20 * 1024 * 1024
-  }
-});
-
-function isZipLike(buffer: Buffer) {
-  return buffer.length >= 2 && buffer[0] === 0x50 && buffer[1] === 0x4b;
-}
-
-function isSupportedImportFile(fileName: string) {
-  const lower = fileName.toLowerCase();
-  return lower.endsWith(".xlsx") || lower.endsWith(".zip");
-}
 
 export async function createApp() {
   await ensureStorage();
@@ -88,33 +71,8 @@ export async function createApp() {
     }
   });
 
-  app.post("/api/knowledge/import", upload.single("file"), async (request, response, next) => {
-    try {
-      const file = request.file;
-      if (!file) {
-        response.status(400).json({ error: "缺少上传文件，字段名应为 file。" });
-        return;
-      }
-
-      if (!isSupportedImportFile(file.originalname)) {
-        response.status(400).json({ error: "当前只支持 .xlsx 或规范化 .zip 文件。" });
-        return;
-      }
-
-      if (!isZipLike(file.buffer)) {
-        response.status(400).json({ error: "上传内容不是有效的 Excel / Zip 文件。" });
-        return;
-      }
-
-      const job = await enqueueKnowledgeImport(file.originalname, file.buffer);
-      response.status(202).json({
-        jobId: job.jobId,
-        knowledgeBaseId: job.knowledgeBaseId,
-        status: job.status
-      });
-    } catch (error) {
-      next(error);
-    }
+  app.post("/api/knowledge/import", (_request, response) => {
+    response.status(410).json({ error: "当前版本不支持网页上传知识库，请替换固定知识源文件后重启服务。" });
   });
 
   app.post("/api/chat", async (request, response, next) => {

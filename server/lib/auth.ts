@@ -143,7 +143,7 @@ export function sendLoginPage(response: Response) {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>输入访问密码</title>
+    <title>E小助 - 输入访问密码</title>
     <style>
       :root {
         color-scheme: light;
@@ -211,9 +211,9 @@ export function sendLoginPage(response: Response) {
   </head>
   <body>
     <section class="card">
-      <p class="eyebrow">Protected Access</p>
+      <p class="eyebrow">E小助</p>
       <h1>输入访问密码</h1>
-      <p>这个页面已加密码，仅供内部小范围使用。</p>
+      <p>E小助 已加密码，仅供内部小范围使用。</p>
       <form id="login-form">
         <input id="password" type="password" placeholder="访问密码" autocomplete="current-password" autofocus />
         <button id="submit" type="submit">进入系统</button>

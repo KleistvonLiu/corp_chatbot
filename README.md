@@ -1,17 +1,16 @@
-# Corp Chatbot
+# E小助
 
-本项目会把企业流程 Excel 或规范化知识库 zip 转成本地知识库，并提供一个网页聊天界面做检索式问答。
+本项目会把固定的企业流程 Excel 和附件目录转成本地知识库，并提供一个网页聊天界面做检索式问答。
 
 ## 功能
 
-- 上传 legacy `.xlsx` 或 canonical `.zip` 后解析知识库。
+- 服务启动时自动同步固定知识源 workbook 和附件目录。
 - 自动提取内嵌的 `docx / pptx / xlsx` 附件文本。
-- 支持把 legacy 工作簿迁移为 `knowledge.xlsx + attachments/` 的规范化 zip 包。
 - 基于本地持久化的 chunks 和 embeddings 做 RAG 检索。
 - 每次回答都返回来源引用，包含流程编号、标题、附件名或外链。
 - 自动统计每个知识库版本下“未能回答”的问题数量，并保留最近未回答问题列表。
 - 网页端可展开查看每次真正发送给模型的请求体（不含 API key）。
-- 重新上传后生成新的知识库版本；旧会话继续绑定旧版本。
+- 固定知识源变更后会生成新的知识库版本；旧会话继续绑定旧版本。
 
 ## 运行
 
@@ -31,13 +30,15 @@ cp .env.example .env
 
 服务端现在会自动读取项目根目录下的 `.env`。
 
-如果你只是内部小范围使用，建议直接设置一个访问密码：
+如果你只是内部小范围使用，建议直接设置一个访问密码，并固定知识源路径：
 
 ```env
 APP_PASSWORD=请改成你自己的密码
+KNOWLEDGE_SOURCE_WORKBOOK_PATH=/home/kleist/Downloads/Data.xlsx
+KNOWLEDGE_SOURCE_ATTACHMENTS_DIR=/home/kleist/Downloads/流程教程知识库规范包_20260402(1)/attachments
 ```
 
-设置后，网页会先显示一个密码页；只有输入正确密码后，才能继续访问知识库、导入文件和发起聊天。认证通过后，服务端会写入一个 `HttpOnly` cookie。
+设置后，E小助 会在启动时自动同步固定知识源。网页会先显示一个密码页；只有输入正确密码后，才能继续访问知识库和发起聊天。认证通过后，服务端会写入一个 `HttpOnly` cookie。
 
 推荐的本地 `vLLM + Qwen3.5-35B-A3B-FP8` 组合：
 
@@ -115,24 +116,7 @@ npm run dev
 - `附件类型`
 - `附件说明`
 
-上传接口同时接受：
-
-- legacy `.xlsx`
-- canonical `.zip`
-
-## 迁移 legacy Excel
-
-可以用内置脚本把旧版工作簿迁移成规范化 zip 包：
-
-```bash
-npm run normalize:legacy -- /path/to/legacy.xlsx [/path/to/output.zip]
-```
-
-脚本会：
-
-- 生成 `knowledge.xlsx`
-- 将嵌入附件外置到 `attachments/`
-- 为旧版 `.doc` 附件生成一个 `.docx` 摘要占位文件
+当前版本不再支持网页上传知识库。更新方式是替换固定 workbook 或附件目录，然后重启服务。
 
 ## 构建
 
@@ -145,8 +129,6 @@ npm start
 
 运行后会在 `data/` 下生成：
 
-- `uploads/`: 原始 Excel
-- `uploads/`: 原始 `.xlsx` 或 `.zip`
 - `knowledge-bases/`: 知识库 JSON
 - `jobs/`: 导入任务状态
 - `sessions/`: 聊天会话
@@ -158,4 +140,4 @@ npm start
 - 规范化迁移脚本会把旧版 `.doc` 降级为 `.docx` 摘要附件，但不会自动还原原始排版。
 - 外部链接只保存 URL，不抓取网页正文。
 - 当 `CHATBOT_PROVIDER=vllm` 且 `EMBEDDING_PROVIDER=offline` 时，回答生成走 vLLM，本地检索向量不依赖额外 embedding 模型。
-- 如果修改了 `.env`，需要重启 `npm run dev` 才会生效。
+- 如果修改了 `.env`、固定 workbook 或附件目录，需要重启服务才会重新同步知识库。
