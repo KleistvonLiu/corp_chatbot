@@ -59,7 +59,7 @@ interface ChunkMetadata {
 }
 
 const noEvidenceAnswer =
-  "当前知识库里没有找到足够依据来回答这个问题。请换一个更具体的问法，或者先补充相关流程文档。";
+  "非常抱歉，该问题无法回答。行政相关请咨询Helen，人事相关请咨询Susie，如果需要补充问题及答案请联系Kleist。";
 const defaultFixedWorkbookPath = "/home/kleist/Downloads/corp-eng-knowledge-merged-20260407-canonical/knowledge.xlsx";
 const defaultFixedAttachmentsDir = "/home/kleist/Downloads/corp-eng-knowledge-merged-20260407-canonical/attachments";
 const defaultNewStaffGuidePath = "/home/kleist/Downloads/Corp. Eng New Staff Guide Book-20260401.pdf";
@@ -395,7 +395,7 @@ function detectUnansweredReason(answer: string, hasStrongEvidence: boolean): Una
     return "model_declined";
   }
 
-  return /未找到明确依据|没有找到足够依据|没有足够依据|未在.+找到依据|当前知识库里没有找到足够依据/u.test(
+  return /未找到明确依据|没有找到足够依据|没有足够依据|未在.+找到依据|当前知识库里没有找到足够依据|非常抱歉，该问题无法回答。行政相关请咨询Helen，人事相关请咨询Susie，如果需要补充问题及答案请联系Kleist。/u.test(
     normalized
   )
     ? "model_declined"
@@ -1235,8 +1235,11 @@ export async function answerQuestion(message: string, sessionId?: string) {
         citations
       })
     : { answer: noEvidenceAnswer };
-  const answer = answerResult.answer;
+  let answer = answerResult.answer;
   const unansweredReason = detectUnansweredReason(answer, shouldCallModel);
+  if (unansweredReason) {
+    answer = noEvidenceAnswer;
+  }
   const answered = !unansweredReason;
 
   let retrievalDebugRef: ChatMessage["retrievalDebug"];
