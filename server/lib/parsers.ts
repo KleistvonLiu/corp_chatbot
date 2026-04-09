@@ -113,6 +113,18 @@ function inferAttachmentKind(fileName: string): AttachmentKind {
   if (extension === ".doc") {
     return "doc";
   }
+  if (extension === ".png") {
+    return "png";
+  }
+  if (extension === ".jpg") {
+    return "jpg";
+  }
+  if (extension === ".jpeg") {
+    return "jpeg";
+  }
+  if (extension === ".webp") {
+    return "webp";
+  }
 
   return "unknown";
 }
@@ -326,6 +338,13 @@ async function parseEmbeddedAttachment(buffer: Buffer, fileName: string): Promis
       kind,
       text: "",
       warning: `${fileName} 的格式暂不支持自动解析。`
+    };
+  }
+
+  if (kind === "png" || kind === "jpg" || kind === "jpeg" || kind === "webp") {
+    return {
+      kind,
+      text: ""
     };
   }
 
@@ -823,6 +842,8 @@ async function buildCanonicalSources(
       aliases: rowMetadata.get(processNumber)?.aliases,
       attachmentName,
       attachmentKind: attachment.kind,
+      attachmentRelativePath: relativePath,
+      attachmentDescription: attachmentDescription || undefined,
       parentSourceId: parentRowSourceIds.get(processNumber),
       parseWarning: attachment.warning,
       text: normalizeSpace([attachmentDescription ? `附件说明: ${attachmentDescription}` : "", attachment.text].filter(Boolean).join("\n"))

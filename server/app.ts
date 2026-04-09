@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import express from "express";
-import { answerQuestion, getActiveKnowledgeResponse, getImportJob } from "./lib/knowledge";
+import { answerQuestion, getActiveKnowledgeResponse, getImportJob, resolveKnowledgeAsset } from "./lib/knowledge";
 import { getAuthStatus, isAuthEnabled, isAuthenticated, loginWithPassword, logout, requireAuth, sendLoginPage } from "./lib/auth";
 import { ensureStorage } from "./lib/storage";
 
@@ -66,6 +66,22 @@ export async function createApp() {
       }
 
       response.json(job);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/knowledge/assets/:knowledgeBaseId/:sourceId", async (request, response, next) => {
+    try {
+      const asset = await resolveKnowledgeAsset(request.params.knowledgeBaseId, request.params.sourceId);
+      if (!asset) {
+        response.status(404).json({ error: "图片资源不存在" });
+        return;
+      }
+
+      response.setHeader("Cache-Control", "private, max-age=3600");
+      response.type(asset.fileName);
+      response.sendFile(asset.filePath);
     } catch (error) {
       next(error);
     }

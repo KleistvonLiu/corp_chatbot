@@ -34,8 +34,9 @@ cp .env.example .env
 
 ```env
 APP_PASSWORD=请改成你自己的密码
-KNOWLEDGE_SOURCE_WORKBOOK_PATH=/home/kleist/Downloads/Data.xlsx
-KNOWLEDGE_SOURCE_ATTACHMENTS_DIR=/home/kleist/Downloads/流程教程知识库规范包_20260402(1)/attachments
+KNOWLEDGE_SOURCE_WORKBOOK_PATH=/home/kleist/Downloads/corp-eng-knowledge-merged-20260407-canonical/knowledge.xlsx
+KNOWLEDGE_SOURCE_ATTACHMENTS_DIR=/home/kleist/Downloads/corp-eng-knowledge-merged-20260407-canonical/attachments
+KEYWORD_RETRIEVAL_DEBUG_ENABLED=false
 ```
 
 设置后，E小助 会在启动时自动同步固定知识源。网页会先显示一个密码页；只有输入正确密码后，才能继续访问知识库和发起聊天。认证通过后，服务端会写入一个 `HttpOnly` cookie。
@@ -57,6 +58,7 @@ CHAT_MAX_TOKENS=300
 - `VLLM_ENABLE_THINKING=false`: 默认关闭 Qwen3.5 的 thinking，减少延迟并避免把思考过程展示给用户。
 - `VLLM_STRIP_THINK_OUTPUT=true`: 如果模型仍返回 `<think>` 或 `Thinking Process`，服务端会自动清洗掉。
 - `CHAT_MAX_TOKENS=300`: 限制单次回答长度，减少冗长输出。
+- `KEYWORD_RETRIEVAL_DEBUG_ENABLED=false`: 默认关闭关键词检索调试落盘；打开后，每次提问会在 `data/retrieval-debug/` 下生成一份检索中间结果 JSON，并在对应 `session` 的 assistant message 上保存轻量引用；若本轮实际调用了聊天模型，debug JSON 也会一并保存发给模型的完整请求体。
 
 如果你要继续使用 OpenAI-compatible 云服务：
 
@@ -131,6 +133,7 @@ npm start
 
 - `knowledge-bases/`: 知识库 JSON
 - `jobs/`: 导入任务状态
+- `retrieval-debug/`: 每题一份关键词检索调试 JSON
 - `sessions/`: 聊天会话
 - `state.json`: 当前活动知识库
 
@@ -141,3 +144,20 @@ npm start
 - 外部链接只保存 URL，不抓取网页正文。
 - 当 `CHATBOT_PROVIDER=vllm` 且 `EMBEDDING_PROVIDER=offline` 时，回答生成走 vLLM，本地检索向量不依赖额外 embedding 模型。
 - 如果修改了 `.env`、固定 workbook 或附件目录，需要重启服务才会重新同步知识库。
+
+## 前端
+cd /home/kleist/Documents/Code/corp_chatbot
+npm run dev:server
+
+## 后端
+cd /home/kleist/Documents/Code/corp_chatbot
+npm run dev:web
+
+## llm
+conda activate vllm-qwen
+export LD_LIBRARY_PATH="$CONDA_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+vllm serve /home/kleist/Documents/Model/Qwen3.5-35B-A3B-FP8   --served-model-name qwen35   --host 127.0.0.1   --port 8000   --dtype auto   --tensor-parallel-size 1   --gpu-memory-utilization 0.90   --max-model-len 8192   --generation-config vllm
+
+## cloudfalre隧道
+cd /home/kleist/Documents/Code/corp_chatbot
+cloudflared tunnel --url http://localhost:5173 这里的port需要改成后端的，要不然没有密码页

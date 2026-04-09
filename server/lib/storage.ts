@@ -6,7 +6,8 @@ import type {
   FixedKnowledgeSourceStatus,
   ImportJobRecord,
   KnowledgeBaseRecord,
-  QuestionStatsRecord
+  QuestionStatsRecord,
+  RetrievalDebugRecord
 } from "../../shared/contracts";
 
 interface AppState {
@@ -22,13 +23,14 @@ const knowledgeDir = path.join(dataDir, "knowledge-bases");
 const jobsDir = path.join(dataDir, "jobs");
 const sessionsDir = path.join(dataDir, "sessions");
 const questionStatsDir = path.join(dataDir, "question-stats");
+const retrievalDebugDir = path.join(dataDir, "retrieval-debug");
 const stateFile = path.join(dataDir, "state.json");
 
 function nowIso() {
   return new Date().toISOString();
 }
 
-function formatSessionTimestamp(timestamp: string) {
+function formatTimestampForFileName(timestamp: string) {
   const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) {
     return "unknown-time";
@@ -86,7 +88,8 @@ export async function ensureStorage() {
     ensureDir(knowledgeDir),
     ensureDir(jobsDir),
     ensureDir(sessionsDir),
-    ensureDir(questionStatsDir)
+    ensureDir(questionStatsDir),
+    ensureDir(retrievalDebugDir)
   ]);
   await migrateLegacySessionFiles();
 }
@@ -147,8 +150,18 @@ export function sessionPath(sessionId: string) {
 }
 
 function timestampedSessionPath(session: Pick<ChatSession, "sessionId" | "createdAt">) {
-  const fileName = `${formatSessionTimestamp(session.createdAt)}-${session.sessionId}.json`;
+  const fileName = `${formatTimestampForFileName(session.createdAt)}-${session.sessionId}.json`;
   return path.join(sessionsDir, fileName);
+}
+
+export function buildRetrievalDebugFileName(params: {
+  createdAt: string;
+  sessionId: string;
+  turnIndex: number;
+  traceId: string;
+}) {
+  const { createdAt, sessionId, turnIndex, traceId } = params;
+  return `${formatTimestampForFileName(createdAt)}-${sessionId}-${turnIndex}-${traceId}.json`;
 }
 
 async function findTimestampedSessionPath(sessionId: string) {
@@ -186,6 +199,24 @@ export async function saveSession(session: ChatSession) {
 
 export function questionStatsPath(knowledgeBaseId: string) {
   return path.join(questionStatsDir, `${knowledgeBaseId}.json`);
+}
+
+export function retrievalDebugPath(fileName: string) {
+  return path.join(retrievalDebugDir, fileName);
+}
+
+export async function saveRetrievalDebug(record: RetrievalDebugRecord) {
+  await writeJson(retrievalDebugPath(record.fileName), record);
+}
+
+export async function loadRetrievalDebug(traceId: string) {
+  await ensureDir(retrievalDebugDir);
+  const fileNames = await fs.readdir(retrievalDebugDir);
+  const matched = fileNames
+    .filter((fileName) => fileName.endsWith(`-${traceId}.json`))
+    .sort();
+
+  return matched.length ? readJson<RetrievalDebugRecord>(retrievalDebugPath(matched[0])) : null;
 }
 
 export function createEmptyQuestionStats(knowledgeBaseId: string): QuestionStatsRecord {

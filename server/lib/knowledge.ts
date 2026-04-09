@@ -5,6 +5,7 @@ import type {
   ChatMessage,
   ChatSession,
   Citation,
+  CitationImage,
   EntryType,
   FixedKnowledgeSourceStatus,
   ImportJobRecord,
@@ -12,9 +13,13 @@ import type {
   KnowledgeChunk,
   KnowledgeSource,
   QuestionStatsRecord,
+  RetrievalDebugRecord,
+  RetrievalEvidenceSelectionStep,
+  RetrievalScoredHit,
   UnansweredReason
 } from "../../shared/contracts";
 import {
+  buildRetrievalDebugFileName,
   buildActiveKnowledgeResponse,
   createEmptyQuestionStats,
   createJobRecord,
@@ -28,6 +33,7 @@ import {
   saveJob,
   saveKnowledgeBase,
   saveQuestionStats,
+  saveRetrievalDebug,
   saveSession,
   saveState,
   writeUploadFile
@@ -40,6 +46,10 @@ interface SearchHit {
   score: number;
 }
 
+interface ScoredSearchHit extends SearchHit {
+  breakdown: RetrievalScoredHit;
+}
+
 interface ChunkMetadata {
   entryType?: EntryType;
   category?: string;
@@ -48,13 +58,20 @@ interface ChunkMetadata {
 
 const noEvidenceAnswer =
   "当前知识库里没有找到足够依据来回答这个问题。请换一个更具体的问法，或者先补充相关流程文档。";
-const defaultFixedWorkbookPath = "/home/kleist/Downloads/Data.xlsx";
-const defaultFixedAttachmentsDir = "/home/kleist/Downloads/流程教程知识库规范包_20260402(1)/attachments";
+const defaultFixedWorkbookPath = "/home/kleist/Downloads/corp-eng-knowledge-merged-20260407-canonical/knowledge.xlsx";
+const defaultFixedAttachmentsDir = "/home/kleist/Downloads/corp-eng-knowledge-merged-20260407-canonical/attachments";
 const topicActionPattern = /怎么|如何|谁|联系|申请|审批|安装|报价|区别|对比|比较|差异|流程|购买|下单|负责/u;
 const procurementIntentPattern = /买|购买|采购|报价|下单/u;
 const referenceLookupPattern = /供应商|联系人|列表|系统链接|参考/u;
 const explicitStepPattern = /(?:^|\n)\s*(?:\d+[.)、]|[-•])/u;
 const sequentialActionPattern = /首先|然后|之后|最后|第一|第二|第三|第四|第五/u;
+const imageAttachmentKinds = new Set(["png", "jpg", "jpeg", "webp"]);
+const retrievalEligibleThreshold = 0.08;
+
+function isRetrievalDebugEnabled() {
+  const raw = process.env.KEYWORD_RETRIEVAL_DEBUG_ENABLED?.trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
 
 function normalizeSpace(text: string) {
   return text
@@ -69,12 +86,66 @@ function normalizeSearchText(text: string) {
   return normalizeSpace(text).toLowerCase();
 }
 
+function stripUrls(text: string) {
+  return text.replace(/https?:\/\/\S+/g, " ");
+}
+
+function isShortAlphanumericToken(term: string) {
+  return /^[a-z0-9]+$/i.test(term) && term.length <= 4;
+}
+
 function clip(text: string, limit = 220) {
   const normalized = normalizeSpace(text);
   if (normalized.length <= limit) {
     return normalized;
   }
   return `${normalized.slice(0, limit - 1)}…`;
+}
+
+function createRetrievalDebugRecord(params: {
+  traceId: string;
+  createdAt: string;
+  sessionId: string;
+  turnIndex: number;
+  knowledgeBaseId: string;
+  originalQuestion: string;
+  resolvedQuestion: string;
+  providerMode: string;
+}): RetrievalDebugRecord {
+  const { traceId, createdAt, sessionId, turnIndex, knowledgeBaseId, originalQuestion, resolvedQuestion, providerMode } = params;
+  return {
+    traceId,
+    fileName: "",
+    createdAt,
+    sessionId,
+    turnIndex,
+    knowledgeBaseId,
+    originalQuestion,
+    resolvedQuestion,
+    providerMode,
+    retrievalDebugEnabled: true,
+    queryKeywords: [],
+    directTerms: [],
+    queryPhrases: [],
+    directCandidateRows: [],
+    candidateChunkCount: 0,
+    totalChunkCount: 0,
+    scoredHits: [],
+    sortedHitOrder: [],
+    eligibleThreshold: retrievalEligibleThreshold,
+    eligibleHitIds: [],
+    topicLookup: false,
+    compareMode: false,
+    dominantTopRow: false,
+    evidenceSelectionSteps: [],
+    selectedEvidenceChunkIds: [],
+    hasStrongEvidence: false,
+    summaryOnlyEvidence: false,
+    shouldCallModel: false,
+    answered: false,
+    unansweredReason: null,
+    citationRowNumbers: []
+  };
 }
 
 function readConfiguredFixedSource(): FixedKnowledgeSourceStatus {
@@ -131,6 +202,10 @@ function parseEntryType(rawValue?: string): EntryType | undefined {
   }
 
   return undefined;
+}
+
+function isImageAttachmentKind(kind?: KnowledgeSource["attachmentKind"]) {
+  return Boolean(kind && imageAttachmentKinds.has(kind));
 }
 
 function readMetadataLine(text: string, label: string) {
@@ -362,6 +437,10 @@ async function buildKnowledgeChunks(
   const drafts: Array<Omit<KnowledgeChunk, "embedding">> = [];
 
   for (const source of sources) {
+    if (source.sourceType === "attachment" && isImageAttachmentKind(source.attachmentKind)) {
+      continue;
+    }
+
     const prefix = [`流程 ${source.rowNumber}`, source.title, source.attachmentName].filter(Boolean).join(" · ");
     const baseText =
       source.sourceType === "link" && source.url
@@ -409,7 +488,8 @@ async function saveActivatedKnowledgeBase(
   originalFileName: string,
   storedFileName: string,
   parsed: Awaited<ReturnType<typeof parseWorkflowWorkbook>>,
-  providerMode = createProvider().mode
+  providerMode = createProvider().mode,
+  canonicalAttachmentsDir?: string
 ) {
   const chunks = await buildKnowledgeChunks(knowledgeBaseId, parsed.sources, providerMode);
   const knowledgeBase: KnowledgeBaseRecord = {
@@ -420,6 +500,7 @@ async function saveActivatedKnowledgeBase(
     providerMode,
     sourceCount: parsed.sources.length,
     chunkCount: chunks.length,
+    canonicalAttachmentsDir,
     versionNotes: parsed.versionNotes,
     sheets: parsed.sheets,
     sources: parsed.sources,
@@ -511,12 +592,17 @@ export async function syncConfiguredKnowledgeBase() {
   }
 
   try {
+    const currentKnowledgeBase = state.activeKnowledgeBaseId ? await loadKnowledgeBase(state.activeKnowledgeBaseId) : null;
     const { fingerprint, workbookBuffer } = await computeFixedSourceFingerprint(
       fixedSource.workbookPath,
       fixedSource.attachmentsDir
     );
 
-    if (state.fixedSource?.lastSyncFingerprint === fingerprint && state.activeKnowledgeBaseId) {
+    if (
+      state.fixedSource?.lastSyncFingerprint === fingerprint &&
+      state.activeKnowledgeBaseId &&
+      !knowledgeBaseNeedsAssetRefresh(currentKnowledgeBase)
+    ) {
       await saveState({
         ...state,
         fixedSource: {
@@ -546,7 +632,9 @@ export async function syncConfiguredKnowledgeBase() {
       knowledgeBaseId,
       path.basename(fixedSource.workbookPath),
       `fixed-${path.basename(fixedSource.workbookPath)}`,
-      parsed
+      parsed,
+      createProvider().mode,
+      fixedSource.attachmentsDir
     );
 
     await saveState({
@@ -651,6 +739,31 @@ function exactTermCoverage(terms: string[], text: string) {
   return total ? matched / total : 0;
 }
 
+function exactTermCoverageForDirectPrefilter(terms: string[], text: string) {
+  if (!terms.length) {
+    return 0;
+  }
+
+  const normalizedText = normalizeSearchText(text);
+  const normalizedTextWithoutUrls = stripUrls(normalizedText);
+  let matched = 0;
+  let total = 0;
+
+  for (const term of terms) {
+    if (term.length < 2) {
+      continue;
+    }
+    const weight = Math.min(term.length, 6);
+    total += weight;
+    const haystack = isShortAlphanumericToken(term) ? normalizedTextWithoutUrls : normalizedText;
+    if (haystack.includes(term.toLowerCase())) {
+      matched += weight;
+    }
+  }
+
+  return total ? matched / total : 0;
+}
+
 function hasAnswerableEvidence(question: string, hits: SearchHit[], evidence: KnowledgeChunk[]) {
   if (!evidence.length) {
     return false;
@@ -687,7 +800,7 @@ function findDirectCandidateRows(knowledgeBase: KnowledgeBaseRecord, directTerms
     .map((source) => ({
       rowNumber: source.rowNumber,
       titleCoverage: exactTermCoverage(directTerms, source.title),
-      textCoverage: exactTermCoverage(directTerms, source.text)
+      textCoverage: exactTermCoverageForDirectPrefilter(directTerms, source.text)
     }));
 
   const titleMatches = rows.filter((row) => row.titleCoverage > 0);
@@ -701,7 +814,8 @@ function findDirectCandidateRows(knowledgeBase: KnowledgeBaseRecord, directTerms
 
 async function searchKnowledgeBase(
   knowledgeBase: KnowledgeBaseRecord,
-  question: string
+  question: string,
+  retrievalDebug?: RetrievalDebugRecord
 ): Promise<SearchHit[]> {
   const provider = createProvider(knowledgeBase.providerMode);
   const [queryEmbedding] = await provider.embedMany([question]);
@@ -713,7 +827,16 @@ async function searchKnowledgeBase(
     ? knowledgeBase.chunks.filter((chunk) => directCandidateRows.has(chunk.rowNumber))
     : knowledgeBase.chunks;
 
-  const hits = candidateChunks.map((chunk) => {
+  if (retrievalDebug) {
+    retrievalDebug.queryKeywords = queryKeywords;
+    retrievalDebug.directTerms = directTerms;
+    retrievalDebug.queryPhrases = queryPhrases;
+    retrievalDebug.directCandidateRows = [...directCandidateRows].sort((left, right) => left - right);
+    retrievalDebug.candidateChunkCount = candidateChunks.length;
+    retrievalDebug.totalChunkCount = knowledgeBase.chunks.length;
+  }
+
+  const hits: ScoredSearchHit[] = candidateChunks.map((chunk) => {
     const semanticScore = cosineSimilarity(queryEmbedding, chunk.embedding);
     const keywordScore = keywordOverlapScore(queryKeywords, chunk.keywords);
     const titleScore = keywordOverlapScore(queryKeywords, extractKeywords(chunk.title));
@@ -738,18 +861,63 @@ async function searchKnowledgeBase(
 
     return {
       chunk,
-      score
+      score,
+      breakdown: {
+        chunkId: chunk.chunkId,
+        sourceId: chunk.sourceId,
+        rowNumber: chunk.rowNumber,
+        title: chunk.title,
+        sourceType: chunk.sourceType,
+        semanticScore,
+        keywordScore,
+        titleScore,
+        substringMatch,
+        phraseScore,
+        exactTitleScore,
+        exactBodyScore,
+        urlBonus,
+        sourceTypeBonus,
+        baseScore,
+        exactBonus,
+        finalScore: score
+      }
     };
   });
 
-  return prioritizeTopicHits(
+  if (retrievalDebug) {
+    retrievalDebug.scoredHits = hits.map((hit) => hit.breakdown);
+  }
+
+  const sortedHits = prioritizeTopicHits(
     question,
-    hits.sort((left, right) => right.score - left.score)
+    [...hits].sort((left, right) => right.score - left.score)
   );
+
+  if (retrievalDebug) {
+    retrievalDebug.sortedHitOrder = sortedHits.map((hit) => hit.chunk.chunkId);
+  }
+
+  return sortedHits.map((hit) => ({
+    chunk: hit.chunk,
+    score: hit.score
+  }));
 }
 
-function selectEvidence(question: string, hits: SearchHit[]) {
-  const eligibleHits = hits.filter((hit) => hit.score >= 0.08);
+function selectEvidence(question: string, hits: SearchHit[], retrievalDebug?: RetrievalDebugRecord) {
+  const eligibleHits = hits.filter((hit) => hit.score >= retrievalEligibleThreshold);
+  const compareMode = isCompareQuestion(question);
+  const topicLookup = shouldPreferFlowCompanion(question);
+
+  if (retrievalDebug) {
+    retrievalDebug.eligibleHitIds = eligibleHits.map((hit) => hit.chunk.chunkId);
+    retrievalDebug.compareMode = compareMode;
+    retrievalDebug.topicLookup = topicLookup;
+    retrievalDebug.topRowNumber = eligibleHits[0]?.chunk.rowNumber;
+    retrievalDebug.dominantTopRow = eligibleHits.length
+      ? eligibleHits[0].score >= (eligibleHits[1]?.score ?? 0) + 0.05
+      : false;
+  }
+
   if (!eligibleHits.length) {
     return [];
   }
@@ -757,24 +925,43 @@ function selectEvidence(question: string, hits: SearchHit[]) {
   const evidence: KnowledgeChunk[] = [];
   const seenChunks = new Set<string>();
   const seenRows = new Set<number>();
+  const scoreByChunkId = new Map(eligibleHits.map((hit) => [hit.chunk.chunkId, hit.score]));
   const topRowNumber = eligibleHits[0].chunk.rowNumber;
-  const compareMode = isCompareQuestion(question);
-  const topicLookup = shouldPreferFlowCompanion(question);
   const evidenceLimit = compareMode ? 3 : 4;
   const dominantTopRow = eligibleHits[0].score >= (eligibleHits[1]?.score ?? 0) + 0.05;
 
-  const pushChunk = (chunk?: KnowledgeChunk) => {
+  const finalizeEvidence = () => {
+    const selectedEvidence = evidence.slice(0, evidenceLimit);
+    if (retrievalDebug) {
+      retrievalDebug.selectedEvidenceChunkIds = selectedEvidence.map((chunk) => chunk.chunkId);
+    }
+    return selectedEvidence;
+  };
+
+  const pushChunk = (chunk: KnowledgeChunk | undefined, reason: string) => {
     if (!chunk || seenChunks.has(chunk.chunkId)) {
       return;
     }
     evidence.push(chunk);
     seenChunks.add(chunk.chunkId);
     seenRows.add(chunk.rowNumber);
+    if (retrievalDebug) {
+      retrievalDebug.evidenceSelectionSteps.push({
+        reason,
+        chunkId: chunk.chunkId,
+        sourceId: chunk.sourceId,
+        rowNumber: chunk.rowNumber,
+        title: chunk.title,
+        sourceType: chunk.sourceType,
+        score: scoreByChunkId.get(chunk.chunkId) ?? 0
+      } satisfies RetrievalEvidenceSelectionStep);
+    }
   };
 
   pushChunk(
     eligibleHits.find((hit) => hit.chunk.rowNumber === topRowNumber && hit.chunk.sourceType === "row")?.chunk ??
-      eligibleHits[0]?.chunk
+      eligibleHits[0]?.chunk,
+    "initial-top-row"
   );
 
   if (topicLookup) {
@@ -799,15 +986,18 @@ function selectEvidence(question: string, hits: SearchHit[]) {
         );
       });
 
-      pushChunk(companionRow?.chunk);
+      pushChunk(companionRow?.chunk, "topic-lookup-companion-row");
     }
 
-    pushChunk(eligibleHits.find((hit) => hit.chunk.rowNumber === topRowNumber && hit.chunk.sourceType === "attachment")?.chunk);
-    return evidence.slice(0, evidenceLimit);
+    pushChunk(eligibleHits.find((hit) => hit.chunk.rowNumber === topRowNumber && hit.chunk.sourceType === "attachment")?.chunk, "topic-lookup-top-row-attachment");
+    return finalizeEvidence();
   }
 
   if (!compareMode && !topicLookup) {
-    pushChunk(eligibleHits.find((hit) => hit.chunk.rowNumber === topRowNumber && hit.chunk.sourceType === "attachment")?.chunk);
+    pushChunk(
+      eligibleHits.find((hit) => hit.chunk.rowNumber === topRowNumber && hit.chunk.sourceType === "attachment")?.chunk,
+      "top-row-attachment"
+    );
   }
 
   if (compareMode) {
@@ -818,7 +1008,7 @@ function selectEvidence(question: string, hits: SearchHit[]) {
       if (hit.chunk.sourceType !== "row" || seenRows.has(hit.chunk.rowNumber)) {
         continue;
       }
-      pushChunk(hit.chunk);
+      pushChunk(hit.chunk, "compare-add-row");
     }
 
     for (const hit of eligibleHits) {
@@ -828,7 +1018,7 @@ function selectEvidence(question: string, hits: SearchHit[]) {
       if (seenChunks.has(hit.chunk.chunkId) || !seenRows.has(hit.chunk.rowNumber)) {
         continue;
       }
-      pushChunk(hit.chunk);
+      pushChunk(hit.chunk, "compare-add-related-chunk");
     }
   } else if (!dominantTopRow) {
     for (const hit of eligibleHits) {
@@ -838,7 +1028,7 @@ function selectEvidence(question: string, hits: SearchHit[]) {
       if (hit.chunk.sourceType !== "row" || seenRows.has(hit.chunk.rowNumber)) {
         continue;
       }
-      pushChunk(hit.chunk);
+      pushChunk(hit.chunk, "balanced-add-row");
     }
 
     for (const hit of eligibleHits) {
@@ -848,18 +1038,42 @@ function selectEvidence(question: string, hits: SearchHit[]) {
       if (seenChunks.has(hit.chunk.chunkId)) {
         continue;
       }
-      pushChunk(hit.chunk);
+      pushChunk(hit.chunk, "balanced-add-chunk");
     }
   }
 
   if (!compareMode && topicLookup) {
-    pushChunk(eligibleHits.find((hit) => hit.chunk.rowNumber === topRowNumber && hit.chunk.sourceType === "attachment")?.chunk);
+    pushChunk(
+      eligibleHits.find((hit) => hit.chunk.rowNumber === topRowNumber && hit.chunk.sourceType === "attachment")?.chunk,
+      "topic-lookup-top-row-attachment"
+    );
   }
 
-  return evidence.slice(0, evidenceLimit);
+  return finalizeEvidence();
 }
 
-function buildCitations(chunks: KnowledgeChunk[]) {
+function buildCitationImages(knowledgeBase: KnowledgeBaseRecord, rowNumber: number, limit = 3): CitationImage[] {
+  return knowledgeBase.sources
+    .filter(
+      (source) =>
+        source.rowNumber === rowNumber &&
+        source.sourceType === "attachment" &&
+        isImageAttachmentKind(source.attachmentKind) &&
+        source.attachmentRelativePath
+    )
+    .sort((left, right) =>
+      (left.attachmentName ?? "").localeCompare(right.attachmentName ?? "", "zh-Hans-CN", { numeric: true })
+    )
+    .slice(0, limit)
+    .map((source) => ({
+      sourceId: source.sourceId,
+      attachmentName: source.attachmentName,
+      label: source.attachmentDescription || source.attachmentName || `流程 ${rowNumber} 图片`,
+      url: `/api/knowledge/assets/${encodeURIComponent(knowledgeBase.knowledgeBaseId)}/${encodeURIComponent(source.sourceId)}`
+    }));
+}
+
+function buildCitations(chunks: KnowledgeChunk[], knowledgeBase: KnowledgeBaseRecord) {
   const citations: Citation[] = [];
   const seenSources = new Set<string>();
   const seenRows = new Set<number>();
@@ -880,7 +1094,8 @@ function buildCitations(chunks: KnowledgeChunk[]) {
       title: chunk.title,
       attachmentName: chunk.attachmentName,
       url: chunk.url,
-      snippet: clip(chunk.text)
+      snippet: clip(chunk.text),
+      images: buildCitationImages(knowledgeBase, chunk.rowNumber)
     });
 
     if (citations.length >= 3) {
@@ -900,7 +1115,8 @@ function buildCitations(chunks: KnowledgeChunk[]) {
       title: chunk.title,
       attachmentName: chunk.attachmentName,
       url: chunk.url,
-      snippet: clip(chunk.text)
+      snippet: clip(chunk.text),
+      images: buildCitationImages(knowledgeBase, chunk.rowNumber)
     });
 
     if (citations.length >= 4) {
@@ -929,12 +1145,37 @@ export async function answerQuestion(message: string, sessionId?: string) {
     throw new Error("活动知识库文件不存在，请检查固定知识源同步。");
   }
 
-  const answerProvider = createAnswerProvider(knowledgeBase.providerMode);
-  const resolvedQuestion = resolveFollowUpQuestion(message, session?.messages ?? []);
+  if (!session) {
+    session = {
+      sessionId: randomUUID(),
+      knowledgeBaseId,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      messages: []
+    };
+  }
 
-  const hits = await searchKnowledgeBase(knowledgeBase, resolvedQuestion);
-  const evidence = selectEvidence(resolvedQuestion, hits);
-  const citations = buildCitations(evidence);
+  const resolvedQuestion = resolveFollowUpQuestion(message, session.messages);
+  const retrievalDebugEnabled = isRetrievalDebugEnabled();
+  const retrievalDebugCreatedAt = new Date().toISOString();
+  const turnIndex = session.messages.filter((item) => item.role === "user").length + 1;
+  const retrievalDebug = retrievalDebugEnabled
+    ? createRetrievalDebugRecord({
+        traceId: randomUUID(),
+        createdAt: retrievalDebugCreatedAt,
+        sessionId: session.sessionId,
+        turnIndex,
+        knowledgeBaseId,
+        originalQuestion: message,
+        resolvedQuestion,
+        providerMode: knowledgeBase.providerMode
+      })
+    : undefined;
+  const answerProvider = createAnswerProvider(knowledgeBase.providerMode);
+
+  const hits = await searchKnowledgeBase(knowledgeBase, resolvedQuestion, retrievalDebug);
+  const evidence = selectEvidence(resolvedQuestion, hits, retrievalDebug);
+  const citations = buildCitations(evidence, knowledgeBase);
   const hasStrongEvidence = hasAnswerableEvidence(resolvedQuestion, hits, evidence);
   const summaryOnlyEvidence = isSummaryOnlyEvidence(evidence);
   const shouldCallModel = hasStrongEvidence && !summaryOnlyEvidence;
@@ -949,14 +1190,28 @@ export async function answerQuestion(message: string, sessionId?: string) {
     : { answer: noEvidenceAnswer };
   const answer = answerResult.answer;
   const unansweredReason = detectUnansweredReason(answer, shouldCallModel);
+  const answered = !unansweredReason;
 
-  if (!session) {
-    session = {
-      sessionId: randomUUID(),
-      knowledgeBaseId,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      messages: []
+  let retrievalDebugRef: ChatMessage["retrievalDebug"];
+  if (retrievalDebug) {
+    retrievalDebug.hasStrongEvidence = hasStrongEvidence;
+    retrievalDebug.summaryOnlyEvidence = summaryOnlyEvidence;
+    retrievalDebug.shouldCallModel = shouldCallModel;
+    retrievalDebug.modelRequest = answerResult.modelRequest;
+    retrievalDebug.answered = answered;
+    retrievalDebug.unansweredReason = unansweredReason;
+    retrievalDebug.citationRowNumbers = citations.map((citation) => citation.rowNumber);
+    retrievalDebug.fileName = buildRetrievalDebugFileName({
+      createdAt: retrievalDebug.createdAt,
+      sessionId: retrievalDebug.sessionId,
+      turnIndex: retrievalDebug.turnIndex,
+      traceId: retrievalDebug.traceId
+    });
+    await saveRetrievalDebug(retrievalDebug);
+    retrievalDebugRef = {
+      traceId: retrievalDebug.traceId,
+      fileName: retrievalDebug.fileName,
+      createdAt: retrievalDebug.createdAt
     };
   }
 
@@ -971,7 +1226,8 @@ export async function answerQuestion(message: string, sessionId?: string) {
       role: "assistant" as const,
       content: answer,
       createdAt: new Date().toISOString(),
-      citations
+      citations,
+      retrievalDebug: retrievalDebugRef
     }
   ].slice(-12);
   session.messages = nextMessages;
@@ -989,9 +1245,64 @@ export async function answerQuestion(message: string, sessionId?: string) {
     answer,
     citations,
     providerMode: answerProvider.mode,
-    answered: !unansweredReason,
+    answered,
     questionStats,
     modelRequest: answerResult.modelRequest
+  };
+}
+
+function knowledgeBaseNeedsAssetRefresh(knowledgeBase: KnowledgeBaseRecord | null) {
+  if (!knowledgeBase) {
+    return true;
+  }
+
+  const imageSources = knowledgeBase.sources.filter((source) => isImageAttachmentKind(source.attachmentKind));
+  if (!imageSources.length) {
+    return false;
+  }
+
+  const imageSourceIds = new Set(imageSources.map((source) => source.sourceId));
+  return (
+    !knowledgeBase.canonicalAttachmentsDir ||
+    imageSources.some((source) => !source.attachmentRelativePath) ||
+    knowledgeBase.chunks.some((chunk) => imageSourceIds.has(chunk.sourceId))
+  );
+}
+
+export async function resolveKnowledgeAsset(knowledgeBaseId: string, sourceId: string) {
+  const knowledgeBase = await loadKnowledgeBase(knowledgeBaseId);
+  if (!knowledgeBase) {
+    return null;
+  }
+
+  const source = knowledgeBase.sources.find((item) => item.sourceId === sourceId);
+  if (
+    !source ||
+    source.sourceType !== "attachment" ||
+    !isImageAttachmentKind(source.attachmentKind) ||
+    !source.attachmentRelativePath
+  ) {
+    return null;
+  }
+
+  const state = await loadState();
+  const attachmentsDir =
+    knowledgeBase.canonicalAttachmentsDir ||
+    (state.activeKnowledgeBaseId === knowledgeBaseId ? state.fixedSource?.attachmentsDir : undefined);
+  if (!attachmentsDir) {
+    return null;
+  }
+
+  const filePath = resolveCanonicalAttachmentPath(attachmentsDir, source.attachmentRelativePath);
+  try {
+    await fs.access(filePath);
+  } catch {
+    return null;
+  }
+
+  return {
+    filePath,
+    fileName: source.attachmentName ?? path.basename(filePath)
   };
 }
 

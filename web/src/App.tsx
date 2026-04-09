@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import type { Citation, ModelRequestDebug, UnansweredQuestionRecord } from "../../shared/contracts";
+import type { Citation, CitationImage, UnansweredQuestionRecord } from "../../shared/contracts";
 import { ApiError, fetchActiveKnowledge, fetchAuthStatus, loginWithPassword, logout, sendChat } from "./api";
 import type { ActiveKnowledgeResponse, AuthStatusResponse } from "./types";
 
@@ -8,8 +8,12 @@ interface UiMessage {
   role: "user" | "assistant";
   content: string;
   citations?: Citation[];
-  modelRequest?: ModelRequestDebug;
-  providerMode?: string;
+}
+
+interface ImagePreview {
+  image: CitationImage;
+  title: string;
+  rowNumber: number;
 }
 
 const welcomeMessage: UiMessage = {
@@ -44,6 +48,7 @@ export default function App() {
   const [sending, setSending] = useState(false);
   const [sessionId, setSessionId] = useState<string | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
+  const [preview, setPreview] = useState<ImagePreview | null>(null);
 
   useEffect(() => {
     void initializeApp();
@@ -169,9 +174,7 @@ export default function App() {
           id: crypto.randomUUID(),
           role: "assistant",
           content: response.answer,
-          citations: response.citations,
-          modelRequest: response.modelRequest,
-          providerMode: response.providerMode
+          citations: response.citations
         }
       ]);
     } catch (chatError) {
@@ -355,6 +358,27 @@ export default function App() {
                           {citation.attachmentName ? ` · ${citation.attachmentName}` : ""}
                         </p>
                         <p className="citation-snippet">{citation.snippet}</p>
+                        {citation.images?.length ? (
+                          <div className="citation-image-grid">
+                            {citation.images.map((image) => (
+                              <button
+                                key={image.sourceId}
+                                type="button"
+                                className="citation-image-button"
+                                onClick={() =>
+                                  setPreview({
+                                    image,
+                                    title: citation.title,
+                                    rowNumber: citation.rowNumber
+                                  })
+                                }
+                              >
+                                <img src={image.url} alt={image.label} loading="lazy" className="citation-image" />
+                                <span className="citation-image-label">{image.label}</span>
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
                         {citation.url ? (
                           <a href={citation.url} target="_blank" rel="noreferrer">
                             打开外链
@@ -365,26 +389,6 @@ export default function App() {
                   </div>
                 ) : null}
 
-                {message.role === "assistant" && message.id !== welcomeMessage.id ? (
-                  <details className="model-request-card">
-                    <summary>查看发送给模型的内容</summary>
-                    {message.modelRequest ? (
-                      <>
-                        <p className="model-request-meta">
-                          {message.modelRequest.providerMode} · {message.modelRequest.endpoint}
-                        </p>
-                        <pre className="model-request-body">{message.modelRequest.body}</pre>
-                      </>
-                    ) : (
-                      <p className="model-request-meta">
-                        本次未调用模型。
-                        {message.providerMode?.startsWith("chat:offline")
-                          ? " 当前聊天 provider 为 offline。"
-                          : " 后端已直接返回拒答文案，没有发送模型请求。"}
-                      </p>
-                    )}
-                  </details>
-                ) : null}
               </article>
             ))}
           </div>
@@ -402,6 +406,21 @@ export default function App() {
           </form>
         </section>
       </section>
+
+      {preview ? (
+        <div className="image-lightbox" role="dialog" aria-modal="true" onClick={() => setPreview(null)}>
+          <div className="image-lightbox-card" onClick={(event) => event.stopPropagation()}>
+            <button type="button" className="image-lightbox-close" onClick={() => setPreview(null)}>
+              关闭
+            </button>
+            <p className="image-lightbox-title">
+              流程 {preview.rowNumber}: {preview.title}
+            </p>
+            <p className="image-lightbox-label">{preview.image.label}</p>
+            <img src={preview.image.url} alt={preview.image.label} className="image-lightbox-image" />
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

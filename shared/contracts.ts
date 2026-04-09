@@ -1,5 +1,5 @@
 export type SourceType = "row" | "attachment" | "link";
-export type AttachmentKind = "docx" | "pptx" | "xlsx" | "doc" | "unknown";
+export type AttachmentKind = "docx" | "pptx" | "xlsx" | "doc" | "png" | "jpg" | "jpeg" | "webp" | "unknown";
 export type JobStatus = "queued" | "running" | "completed" | "failed";
 export type EntryType = "流程" | "联系人" | "供应商" | "参考" | "系统链接";
 
@@ -15,6 +15,8 @@ export interface KnowledgeSource {
   relatedForm?: string;
   attachmentName?: string;
   attachmentKind?: AttachmentKind;
+  attachmentRelativePath?: string;
+  attachmentDescription?: string;
   url?: string;
   text: string;
   parentSourceId?: string;
@@ -45,6 +47,86 @@ export interface Citation {
   attachmentName?: string;
   url?: string;
   snippet: string;
+  images?: CitationImage[];
+}
+
+export interface CitationImage {
+  sourceId: string;
+  attachmentName?: string;
+  label: string;
+  url: string;
+}
+
+export interface RetrievalDebugRef {
+  traceId: string;
+  fileName: string;
+  createdAt: string;
+}
+
+export interface RetrievalScoredHit {
+  chunkId: string;
+  sourceId: string;
+  rowNumber: number;
+  title: string;
+  sourceType: SourceType;
+  semanticScore: number;
+  keywordScore: number;
+  titleScore: number;
+  substringMatch: number;
+  phraseScore: number;
+  exactTitleScore: number;
+  exactBodyScore: number;
+  urlBonus: number;
+  sourceTypeBonus: number;
+  baseScore: number;
+  exactBonus: number;
+  finalScore: number;
+}
+
+export interface RetrievalEvidenceSelectionStep {
+  reason: string;
+  chunkId: string;
+  sourceId: string;
+  rowNumber: number;
+  title: string;
+  sourceType: SourceType;
+  score: number;
+}
+
+export interface RetrievalDebugRecord {
+  traceId: string;
+  fileName: string;
+  createdAt: string;
+  sessionId: string;
+  turnIndex: number;
+  knowledgeBaseId: string;
+  originalQuestion: string;
+  resolvedQuestion: string;
+  providerMode: string;
+  retrievalDebugEnabled: boolean;
+  queryKeywords: string[];
+  directTerms: string[];
+  queryPhrases: string[];
+  directCandidateRows: number[];
+  candidateChunkCount: number;
+  totalChunkCount: number;
+  scoredHits: RetrievalScoredHit[];
+  sortedHitOrder: string[];
+  eligibleThreshold: number;
+  eligibleHitIds: string[];
+  topicLookup: boolean;
+  compareMode: boolean;
+  topRowNumber?: number;
+  dominantTopRow: boolean;
+  evidenceSelectionSteps: RetrievalEvidenceSelectionStep[];
+  selectedEvidenceChunkIds: string[];
+  hasStrongEvidence: boolean;
+  summaryOnlyEvidence: boolean;
+  shouldCallModel: boolean;
+  modelRequest?: ModelRequestDebug;
+  answered: boolean;
+  unansweredReason?: UnansweredReason | null;
+  citationRowNumbers: number[];
 }
 
 export interface KnowledgeBaseRecord {
@@ -55,6 +137,7 @@ export interface KnowledgeBaseRecord {
   providerMode: string;
   sourceCount: number;
   chunkCount: number;
+  canonicalAttachmentsDir?: string;
   versionNotes?: string;
   sheets: string[];
   sources: KnowledgeSource[];
@@ -88,6 +171,7 @@ export interface ChatMessage {
   content: string;
   createdAt: string;
   citations?: Citation[];
+  retrievalDebug?: RetrievalDebugRef;
 }
 
 export interface ChatSession {
