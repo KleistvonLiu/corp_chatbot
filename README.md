@@ -36,6 +36,8 @@ cp .env.example .env
 APP_PASSWORD=请改成你自己的密码
 KNOWLEDGE_SOURCE_WORKBOOK_PATH=/home/kleist/Downloads/corp-eng-knowledge-merged-20260407-canonical/knowledge.xlsx
 KNOWLEDGE_SOURCE_ATTACHMENTS_DIR=/home/kleist/Downloads/corp-eng-knowledge-merged-20260407-canonical/attachments
+USER_DOC_NEW_STAFF_PATH=/home/kleist/Downloads/Corp. Eng New Staff Guide Book-20260401.pdf
+USER_DOC_WORKFLOW_SUMMARY_PATH=/home/kleist/Downloads/流程教程汇总_20260209.xlsx
 KEYWORD_RETRIEVAL_DEBUG_ENABLED=false
 ```
 
@@ -58,6 +60,7 @@ CHAT_MAX_TOKENS=300
 - `VLLM_ENABLE_THINKING=false`: 默认关闭 Qwen3.5 的 thinking，减少延迟并避免把思考过程展示给用户。
 - `VLLM_STRIP_THINK_OUTPUT=true`: 如果模型仍返回 `<think>` 或 `Thinking Process`，服务端会自动清洗掉。
 - `CHAT_MAX_TOKENS=300`: 限制单次回答长度，减少冗长输出。
+- `USER_DOC_NEW_STAFF_PATH` / `USER_DOC_WORKFLOW_SUMMARY_PATH`: 前端顶部两个常用文档入口对应的文件路径；登录后会通过受保护接口以新标签页打开。
 - `KEYWORD_RETRIEVAL_DEBUG_ENABLED=false`: 默认关闭关键词检索调试落盘；打开后，每次提问会在 `data/retrieval-debug/` 下生成一份检索中间结果 JSON，并在对应 `session` 的 assistant message 上保存轻量引用；若本轮实际调用了聊天模型，debug JSON 也会一并保存发给模型的完整请求体。
 
 如果你要继续使用 OpenAI-compatible 云服务：

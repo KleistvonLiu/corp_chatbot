@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import express from "express";
-import { answerQuestion, getActiveKnowledgeResponse, getImportJob, resolveKnowledgeAsset } from "./lib/knowledge";
+import { answerQuestion, getActiveKnowledgeResponse, getImportJob, resolveKnowledgeAsset, resolveUserDocument } from "./lib/knowledge";
 import { getAuthStatus, isAuthEnabled, isAuthenticated, loginWithPassword, logout, requireAuth, sendLoginPage } from "./lib/auth";
 import { ensureStorage } from "./lib/storage";
 
@@ -82,6 +82,23 @@ export async function createApp() {
       response.setHeader("Cache-Control", "private, max-age=3600");
       response.type(asset.fileName);
       response.sendFile(asset.filePath);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/docs/:docId", async (request, response, next) => {
+    try {
+      const document = await resolveUserDocument(request.params.docId);
+      if (!document) {
+        response.status(404).json({ error: "文档不存在" });
+        return;
+      }
+
+      response.setHeader("Cache-Control", "private, max-age=3600");
+      response.setHeader("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(document.fileName)}`);
+      response.type(document.fileName);
+      response.sendFile(document.filePath);
     } catch (error) {
       next(error);
     }

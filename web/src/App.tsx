@@ -1,5 +1,5 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import type { Citation, CitationImage, UnansweredQuestionRecord } from "../../shared/contracts";
+import { FormEvent, useEffect, useState } from "react";
+import type { Citation, CitationImage } from "../../shared/contracts";
 import { ApiError, fetchActiveKnowledge, fetchAuthStatus, loginWithPassword, logout, sendChat } from "./api";
 import type { ActiveKnowledgeResponse, AuthStatusResponse } from "./types";
 
@@ -22,20 +22,8 @@ const welcomeMessage: UiMessage = {
   content: "我是 E小助，会基于固定流程知识库和附件证据回答问题，并附上引用来源。"
 };
 
-function formatUnansweredReason(reason: UnansweredQuestionRecord["reason"]) {
-  return reason === "insufficient_evidence" ? "未命中证据" : "模型拒答";
-}
-
 function formatErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
-}
-
-function toDisplayName(filePath?: string) {
-  if (!filePath) {
-    return "未配置";
-  }
-
-  return filePath.split(/[\\/]/).filter(Boolean).pop() ?? filePath;
 }
 
 export default function App() {
@@ -187,54 +175,7 @@ export default function App() {
     }
   }
 
-  const knowledgeCard = useMemo(() => {
-    if (!active?.knowledgeBase) {
-      return {
-        headline: "当前没有活动知识库",
-        subline: "请检查固定知识源配置和启动日志。"
-      };
-    }
-
-    return {
-      headline: active.knowledgeBase.originalFileName,
-      subline: `版本时间 ${new Date(active.knowledgeBase.importedAt).toLocaleString("zh-CN")} · ${active.knowledgeBase.sourceCount} 条来源 · ${active.knowledgeBase.chunkCount} 个检索块`
-    };
-  }, [active]);
-
-  const sourceCard = useMemo(() => {
-    const fixedSource = active?.fixedSource;
-    if (!fixedSource?.configured) {
-      return {
-        title: "固定知识源未配置",
-        subline: "请在 .env 中设置 KNOWLEDGE_SOURCE_WORKBOOK_PATH 和 KNOWLEDGE_SOURCE_ATTACHMENTS_DIR。",
-        error: undefined as string | undefined
-      };
-    }
-
-    return {
-      title: toDisplayName(fixedSource.workbookPath),
-      subline: fixedSource.lastSyncAt
-        ? `最近同步 ${new Date(fixedSource.lastSyncAt).toLocaleString("zh-CN")} · 附件目录 ${toDisplayName(fixedSource.attachmentsDir)}`
-        : `附件目录 ${toDisplayName(fixedSource.attachmentsDir)}`,
-      error: fixedSource.syncError
-    };
-  }, [active]);
-
-  const statsCard = useMemo(() => {
-    const stats = active?.questionStats;
-    if (!stats) {
-      return {
-        headline: "未答问题统计尚未生成",
-        subline: "开始提问后，这里会累计显示未回答问题的数量。"
-      };
-    }
-
-    const rate = stats.totalQuestions ? `${Math.round((stats.unansweredCount / stats.totalQuestions) * 100)}%` : "0%";
-    return {
-      headline: `累计 ${stats.unansweredCount} 个问题未回答`,
-      subline: `总提问 ${stats.totalQuestions} 次 · 未回答占比 ${rate}`
-    };
-  }, [active]);
+  const documentLinks = active?.documentLinks ?? [];
 
   if (!auth) {
     return (
@@ -278,20 +219,13 @@ export default function App() {
   }
 
   return (
-    <main className="app-shell">
-      <section className="hero-panel">
-        <div className="hero-copy">
-          <p className="eyebrow">E小助</p>
-          <h1>固定流程知识库问答助手</h1>
-          <p className="hero-text">E小助 会在服务启动时自动同步固定知识源，并基于主表和附件证据回答问题。</p>
-        </div>
-
-        <div className="active-card">
-          <div className="active-card-top">
+    <main className="app-shell app-shell-simple">
+      <section className="hero-panel hero-panel-simple">
+        <div className="hero-copy hero-copy-simple">
+          <div className="hero-copy-top">
             <div>
-              <h2>活动知识库</h2>
-              <p className="active-title">{knowledgeCard.headline}</p>
-              <p className="active-subline">{knowledgeCard.subline}</p>
+              <p className="eyebrow">E小助</p>
+              <h1>固定流程知识库问答助手</h1>
             </div>
             {auth.enabled ? (
               <button type="button" className="ghost-button" onClick={handleLogout}>
@@ -299,112 +233,96 @@ export default function App() {
               </button>
             ) : null}
           </div>
-          <div className="stats-block">
-            <p className="stats-title">固定知识源</p>
-            <p className="stats-subline">{sourceCard.title}</p>
-            <p className="stats-subline">{sourceCard.subline}</p>
-            {sourceCard.error ? <p className="error-text">{sourceCard.error}</p> : null}
+          <p className="hero-text">直接提问流程、联系人或位置问题，回答会附上引用来源和相关图片。</p>
+          <div className="doc-link-list" aria-label="常用文档入口">
+            {documentLinks.map((documentLink) =>
+              documentLink.available ? (
+                <a
+                  key={documentLink.id}
+                  href={documentLink.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="doc-link-button"
+                >
+                  {documentLink.label}
+                </a>
+              ) : (
+                <span key={documentLink.id} className="doc-link-button disabled" aria-disabled="true">
+                  {documentLink.label}
+                </span>
+              )
+            )}
           </div>
-          <div className="stats-block">
-            <p className="stats-title">{statsCard.headline}</p>
-            <p className="stats-subline">{statsCard.subline}</p>
-          </div>
+          {error ? <p className="error-text hero-error">{error}</p> : null}
         </div>
       </section>
 
-      <section className="workspace-grid single-pane">
-        <aside className="import-panel">
-          <div className="panel-header">
-            <h2>系统说明</h2>
-            <p>知识库更新方式已固定。请替换服务端配置的 Excel 和附件目录后重启服务，不再支持网页上传。</p>
-          </div>
+      <section className="chat-panel chat-panel-standalone">
+        <div className="panel-header">
+          <h2>E小助 对话窗口</h2>
+          <p>例如“安装新软件要走什么单？”、“P200厂区平面图”、“考勤问题找谁？”</p>
+        </div>
 
-          {active?.questionStats?.recentUnanswered.length ? (
-            <div className="warning-box">
-              <h3>最近未回答问题</h3>
-              {active.questionStats.recentUnanswered.slice(0, 5).map((item, index) => (
-                <p key={`${item.createdAt}-${index}`}>
-                  {item.question}
-                  <br />
-                  <small>
-                    {new Date(item.createdAt).toLocaleString("zh-CN")} · {formatUnansweredReason(item.reason)}
-                  </small>
-                </p>
-              ))}
-            </div>
-          ) : null}
+        <div className="message-list">
+          {messages.map((message) => (
+            <article key={message.id} className={`message-card ${message.role}`}>
+              <p className="message-role">{message.role === "assistant" ? "E小助" : "你"}</p>
+              <p className="message-content">{message.content}</p>
 
-          {error ? <p className="error-text">{error}</p> : null}
-        </aside>
+              {message.citations?.length ? (
+                <div className="citation-list">
+                  {message.citations.map((citation) => (
+                    <div key={`${message.id}-${citation.sourceId}`} className="citation-card">
+                      <p className="citation-title">
+                        流程 {citation.rowNumber}: {citation.title}
+                        {citation.attachmentName ? ` · ${citation.attachmentName}` : ""}
+                      </p>
+                      <p className="citation-snippet">{citation.snippet}</p>
+                      {citation.images?.length ? (
+                        <div className="citation-image-grid">
+                          {citation.images.map((image) => (
+                            <button
+                              key={image.sourceId}
+                              type="button"
+                              className="citation-image-button"
+                              onClick={() =>
+                                setPreview({
+                                  image,
+                                  title: citation.title,
+                                  rowNumber: citation.rowNumber
+                                })
+                              }
+                            >
+                              <img src={image.url} alt={image.label} loading="lazy" className="citation-image" />
+                              <span className="citation-image-label">{image.label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                      {citation.url ? (
+                        <a href={citation.url} target="_blank" rel="noreferrer">
+                          打开外链
+                        </a>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </article>
+          ))}
+        </div>
 
-        <section className="chat-panel">
-          <div className="panel-header">
-            <h2>E小助 对话窗口</h2>
-            <p>例如“安装新软件要走什么单？”、“软件测试找谁？”</p>
-          </div>
-
-          <div className="message-list">
-            {messages.map((message) => (
-              <article key={message.id} className={`message-card ${message.role}`}>
-                <p className="message-role">{message.role === "assistant" ? "E小助" : "你"}</p>
-                <p className="message-content">{message.content}</p>
-
-                {message.citations?.length ? (
-                  <div className="citation-list">
-                    {message.citations.map((citation) => (
-                      <div key={`${message.id}-${citation.sourceId}`} className="citation-card">
-                        <p className="citation-title">
-                          流程 {citation.rowNumber}: {citation.title}
-                          {citation.attachmentName ? ` · ${citation.attachmentName}` : ""}
-                        </p>
-                        <p className="citation-snippet">{citation.snippet}</p>
-                        {citation.images?.length ? (
-                          <div className="citation-image-grid">
-                            {citation.images.map((image) => (
-                              <button
-                                key={image.sourceId}
-                                type="button"
-                                className="citation-image-button"
-                                onClick={() =>
-                                  setPreview({
-                                    image,
-                                    title: citation.title,
-                                    rowNumber: citation.rowNumber
-                                  })
-                                }
-                              >
-                                <img src={image.url} alt={image.label} loading="lazy" className="citation-image" />
-                                <span className="citation-image-label">{image.label}</span>
-                              </button>
-                            ))}
-                          </div>
-                        ) : null}
-                        {citation.url ? (
-                          <a href={citation.url} target="_blank" rel="noreferrer">
-                            打开外链
-                          </a>
-                        ) : null}
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-
-              </article>
-            ))}
-          </div>
-
-          <form className="composer" onSubmit={handleChatSubmit}>
-            <textarea
-              placeholder="输入你的问题"
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              disabled={sending}
-            />
-            <button className="primary-button" disabled={sending || !draft.trim()}>
-              {sending ? "回答中..." : "发送"}
-            </button>
-          </form>
-        </section>
+        <form className="composer" onSubmit={handleChatSubmit}>
+          <textarea
+            placeholder="输入你的问题"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            disabled={sending}
+          />
+          <button className="primary-button" disabled={sending || !draft.trim()}>
+            {sending ? "回答中..." : "发送"}
+          </button>
+        </form>
       </section>
 
       {preview ? (

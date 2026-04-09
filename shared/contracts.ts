@@ -164,6 +164,7 @@ export interface ActiveKnowledgeResponse {
   latestJob?: ImportJobRecord;
   questionStats?: QuestionStatsRecord;
   fixedSource?: FixedKnowledgeSourceStatus;
+  documentLinks?: UserDocumentLink[];
 }
 
 export interface ChatMessage {
@@ -216,6 +217,15 @@ export interface FixedKnowledgeSourceStatus {
   lastSyncAt?: string;
   lastSyncFingerprint?: string;
   syncError?: string;
+}
+
+export type UserDocumentId = "new-staff-guide" | "workflow-summary";
+
+export interface UserDocumentLink {
+  id: UserDocumentId;
+  label: string;
+  url: string;
+  available: boolean;
 }
 
 export interface ImportResponse {

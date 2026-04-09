@@ -45,6 +45,10 @@ input {
   padding: 32px 0 40px;
 }
 
+.app-shell-simple {
+  width: min(1040px, calc(100vw - 32px));
+}
+
 .auth-shell {
   min-height: 100vh;
   display: grid;
@@ -98,6 +102,22 @@ input {
   padding: 34px;
 }
 
+.hero-panel-simple {
+  grid-template-columns: 1fr;
+}
+
+.hero-copy-simple {
+  display: grid;
+  gap: 18px;
+}
+
+.hero-copy-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
 .eyebrow {
   margin: 0 0 10px;
   letter-spacing: 0.14em;
@@ -120,6 +140,39 @@ input {
   margin: 18px 0 0;
   color: var(--muted);
   font-size: 16px;
+}
+
+.hero-copy-simple .hero-text {
+  margin: 0;
+}
+
+.hero-error {
+  margin-top: 4px;
+}
+
+.doc-link-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.doc-link-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 46px;
+  padding: 0 18px;
+  border-radius: 14px;
+  border: 1px solid rgba(156, 63, 25, 0.2);
+  background: rgba(255, 251, 245, 0.82);
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.doc-link-button.disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
 }
 
 .active-card {
@@ -282,6 +335,10 @@ input {
   display: flex;
   flex-direction: column;
   min-height: 72vh;
+}
+
+.chat-panel-standalone {
+  padding: 24px;
 }
 
 .message-list {
@@ -475,6 +532,10 @@ input {
   .hero-panel,
   .workspace-grid {
     grid-template-columns: 1fr;
+  }
+
+  .hero-copy-top {
+    flex-direction: column;
   }
 
   .chat-panel {

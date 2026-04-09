@@ -16,7 +16,9 @@ import type {
   RetrievalDebugRecord,
   RetrievalEvidenceSelectionStep,
   RetrievalScoredHit,
-  UnansweredReason
+  UnansweredReason,
+  UserDocumentId,
+  UserDocumentLink
 } from "../../shared/contracts";
 import {
   buildRetrievalDebugFileName,
@@ -60,6 +62,8 @@ const noEvidenceAnswer =
   "当前知识库里没有找到足够依据来回答这个问题。请换一个更具体的问法，或者先补充相关流程文档。";
 const defaultFixedWorkbookPath = "/home/kleist/Downloads/corp-eng-knowledge-merged-20260407-canonical/knowledge.xlsx";
 const defaultFixedAttachmentsDir = "/home/kleist/Downloads/corp-eng-knowledge-merged-20260407-canonical/attachments";
+const defaultNewStaffGuidePath = "/home/kleist/Downloads/Corp. Eng New Staff Guide Book-20260401.pdf";
+const defaultWorkflowSummaryPath = "/home/kleist/Downloads/流程教程汇总_20260209.xlsx";
 const topicActionPattern = /怎么|如何|谁|联系|申请|审批|安装|报价|区别|对比|比较|差异|流程|购买|下单|负责/u;
 const procurementIntentPattern = /买|购买|采购|报价|下单/u;
 const referenceLookupPattern = /供应商|联系人|列表|系统链接|参考/u;
@@ -67,6 +71,25 @@ const explicitStepPattern = /(?:^|\n)\s*(?:\d+[.)、]|[-•])/u;
 const sequentialActionPattern = /首先|然后|之后|最后|第一|第二|第三|第四|第五/u;
 const imageAttachmentKinds = new Set(["png", "jpg", "jpeg", "webp"]);
 const retrievalEligibleThreshold = 0.08;
+const userDocumentConfigs = [
+  {
+    id: "new-staff-guide",
+    label: "新同事共享册",
+    envName: "USER_DOC_NEW_STAFF_PATH",
+    defaultPath: defaultNewStaffGuidePath
+  },
+  {
+    id: "workflow-summary",
+    label: "流程教程汇总",
+    envName: "USER_DOC_WORKFLOW_SUMMARY_PATH",
+    defaultPath: defaultWorkflowSummaryPath
+  }
+] satisfies Array<{
+  id: UserDocumentId;
+  label: string;
+  envName: string;
+  defaultPath: string;
+}>;
 
 function isRetrievalDebugEnabled() {
   const raw = process.env.KEYWORD_RETRIEVAL_DEBUG_ENABLED?.trim().toLowerCase();
@@ -100,6 +123,15 @@ function clip(text: string, limit = 220) {
     return normalized;
   }
   return `${normalized.slice(0, limit - 1)}…`;
+}
+
+async function pathExists(filePath: string) {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function createRetrievalDebugRecord(params: {
@@ -156,6 +188,21 @@ function readConfiguredFixedSource(): FixedKnowledgeSourceStatus {
     workbookPath: workbookPath || undefined,
     attachmentsDir: attachmentsDir || undefined
   };
+}
+
+function readConfiguredUserDocumentPath(envName: string, defaultPath: string) {
+  return process.env[envName]?.trim() || defaultPath;
+}
+
+async function listUserDocumentLinks(): Promise<UserDocumentLink[]> {
+  return Promise.all(
+    userDocumentConfigs.map(async (config) => ({
+      id: config.id,
+      label: config.label,
+      url: `/api/docs/${config.id}`,
+      available: await pathExists(readConfiguredUserDocumentPath(config.envName, config.defaultPath))
+    }))
+  );
 }
 
 function fingerprintBuffer(hash: ReturnType<typeof createHash>, label: string, buffer: Buffer) {
@@ -1306,8 +1353,29 @@ export async function resolveKnowledgeAsset(knowledgeBaseId: string, sourceId: s
   };
 }
 
+export async function resolveUserDocument(docId: string) {
+  const config = userDocumentConfigs.find((item) => item.id === docId);
+  if (!config) {
+    return null;
+  }
+
+  const filePath = readConfiguredUserDocumentPath(config.envName, config.defaultPath);
+  if (!(await pathExists(filePath))) {
+    return null;
+  }
+
+  return {
+    filePath,
+    fileName: path.basename(filePath)
+  };
+}
+
 export async function getActiveKnowledgeResponse() {
-  return buildActiveKnowledgeResponse();
+  const response = await buildActiveKnowledgeResponse();
+  return {
+    ...response,
+    documentLinks: await listUserDocumentLinks()
+  };
 }
 
 export async function getImportJob(jobId: string) {
