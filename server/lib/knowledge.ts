@@ -59,7 +59,7 @@ interface ChunkMetadata {
 }
 
 const noEvidenceAnswer =
-  "非常抱歉，该问题无法回答。行政相关请咨询Helen，人事相关请咨询Susie，如果需要补充问题及答案请联系Kleist。";
+  "非常抱歉，该问题无法回答。行政相关请咨询Helen（yanhong wang），人事相关请咨询Susie（susie sl huang），如果需要补充问题及答案请联系Kleist（kleist jf liu）。";
 const defaultFixedWorkbookPath = "/home/kleist/Downloads/corp-eng-knowledge-merged-20260407-canonical/knowledge.xlsx";
 const defaultFixedAttachmentsDir = "/home/kleist/Downloads/corp-eng-knowledge-merged-20260407-canonical/attachments";
 const defaultNewStaffGuidePath = "/home/kleist/Downloads/Corp. Eng New Staff Guide Book-20260401.pdf";
@@ -395,7 +395,7 @@ function detectUnansweredReason(answer: string, hasStrongEvidence: boolean): Una
     return "model_declined";
   }
 
-  return /未找到明确依据|没有找到足够依据|没有足够依据|未在.+找到依据|当前知识库里没有找到足够依据|非常抱歉，该问题无法回答。行政相关请咨询Helen，人事相关请咨询Susie，如果需要补充问题及答案请联系Kleist。/u.test(
+  return /未找到明确依据|没有找到足够依据|没有足够依据|未在.+找到依据|当前知识库里没有找到足够依据|非常抱歉，该问题无法回答。行政相关请咨询Helen（yanhong wang），人事相关请咨询Susie（susie sl huang），如果需要补充问题及答案请联系Kleist（kleist jf liu）。/u.test(
     normalized
   )
     ? "model_declined"

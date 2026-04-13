@@ -354,7 +354,7 @@ export function extractDirectMatchTerms(text: string): string[] {
 }
 
 function isNoEvidenceAnswer(text: string) {
-  return /未找到明确依据|没有找到足够依据|当前知识库里没有找到足够依据|非常抱歉，该问题无法回答。行政相关请咨询Helen，人事相关请咨询Susie，如果需要补充问题及答案请联系Kleist。/u.test(
+  return /未找到明确依据|没有找到足够依据|当前知识库里没有找到足够依据|非常抱歉，该问题无法回答。行政相关请咨询Helen（yanhong wang），人事相关请咨询Susie（susie sl huang），如果需要补充问题及答案请联系Kleist（kleist jf liu）。/u.test(
     normalizeSpace(text)
   );
 }
@@ -469,7 +469,7 @@ class OfflineChatProvider implements ChatProvider {
   async answer(input: AnswerInput) {
     if (!input.evidence.length || !input.citations.length) {
       return {
-        answer: "非常抱歉，该问题无法回答。行政相关请咨询Helen，人事相关请咨询Susie，如果需要补充问题及答案请联系Kleist。"
+        answer: "非常抱歉，该问题无法回答。行政相关请咨询Helen（yanhong wang），人事相关请咨询Susie（susie sl huang），如果需要补充问题及答案请联系Kleist（kleist jf liu）。"
       };
     }
 
@@ -576,7 +576,7 @@ class OpenAiCompatibleChatProvider implements ChatProvider {
       .join("\n\n");
 
     const systemPrompt =
-      "你是 E小助，公司内部流程助手。只能依据本轮提供的证据回答；不要编造，也不要复用历史对话里未在本轮证据出现的步骤。直接给结论和必要步骤，不要输出分析、草稿、思考过程、Thinking Process、<think> 标签或引用编号。若问题对应明确流程，优先回答该流程中的联系人与办理步骤。只有当前证据里明确存在的步骤才能写入答案。若无法依据本轮证据给出明确可执行回答，直接且只输出“非常抱歉，该问题无法回答。行政相关请咨询Helen，人事相关请咨询Susie，如果需要补充问题及答案请联系Kleist。”。回答默认使用中文，保留文档中的英文专有名词。请尽量简短：普通问题控制在 3-6 句，对比问题只总结最关键的 2-3 点。";
+      "你是 E小助，公司内部流程助手。只能依据本轮提供的证据回答；不要编造，也不要复用历史对话里未在本轮证据出现的步骤。直接给结论和必要步骤，不要输出分析、草稿、思考过程、Thinking Process、<think> 标签或引用编号。若问题对应明确流程，优先回答该流程中的联系人与办理步骤。只有当前证据里明确存在的步骤才能写入答案。若无法依据本轮证据给出明确可执行回答，直接且只输出“非常抱歉，该问题无法回答。行政相关请咨询Helen（yanhong wang），人事相关请咨询Susie（susie sl huang），如果需要补充问题及答案请联系Kleist（kleist jf liu）。”。回答默认使用中文，保留文档中的英文专有名词。请尽量简短：普通问题控制在 3-6 句，对比问题只总结最关键的 2-3 点。";
     const userPrompt = `历史对话:\n${history || "无"}\n\n问题:\n${input.question}\n\n证据:\n${evidence}`;
 
     const requestBody: Record<string, unknown> = {

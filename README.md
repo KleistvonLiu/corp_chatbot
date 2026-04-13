@@ -148,11 +148,11 @@ npm start
 - 当 `CHATBOT_PROVIDER=vllm` 且 `EMBEDDING_PROVIDER=offline` 时，回答生成走 vLLM，本地检索向量不依赖额外 embedding 模型。
 - 如果修改了 `.env`、固定 workbook 或附件目录，需要重启服务才会重新同步知识库。
 
-## 前端
+## 后端
 cd /home/kleist/Documents/Code/corp_chatbot
 npm run dev:server
 
-## 后端
+## 前端
 cd /home/kleist/Documents/Code/corp_chatbot
 npm run dev:web
 
