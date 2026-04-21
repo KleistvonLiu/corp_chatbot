@@ -24,13 +24,17 @@ async function parseJson<T>(response: Response): Promise<T> {
 }
 
 export async function fetchAuthStatus(): Promise<AuthStatusResponse> {
-  return parseJson<AuthStatusResponse>(await fetch("/api/auth/status"));
+  return parseJson<AuthStatusResponse>(await fetch("/api/auth/status", {
+    cache: "no-store",
+    credentials: "same-origin"
+  }));
 }
 
 export async function loginWithPassword(password: string): Promise<AuthStatusResponse> {
   return parseJson<AuthStatusResponse>(
     await fetch("/api/auth/login", {
       method: "POST",
+      credentials: "same-origin",
       headers: {
         "Content-Type": "application/json"
       },
@@ -42,19 +46,24 @@ export async function loginWithPassword(password: string): Promise<AuthStatusRes
 export async function logout(): Promise<AuthStatusResponse> {
   return parseJson<AuthStatusResponse>(
     await fetch("/api/auth/logout", {
-      method: "POST"
+      method: "POST",
+      credentials: "same-origin"
     })
   );
 }
 
 export async function fetchActiveKnowledge(): Promise<ActiveKnowledgeResponse> {
-  return parseJson<ActiveKnowledgeResponse>(await fetch("/api/knowledge/active"));
+  return parseJson<ActiveKnowledgeResponse>(await fetch("/api/knowledge/active", {
+    cache: "no-store",
+    credentials: "same-origin"
+  }));
 }
 
 export async function sendChat(message: string, sessionId?: string): Promise<ChatResponseBody> {
   return parseJson<ChatResponseBody>(
     await fetch("/api/chat", {
       method: "POST",
+      credentials: "same-origin",
       headers: {
         "Content-Type": "application/json"
       },

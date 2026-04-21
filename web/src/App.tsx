@@ -22,7 +22,26 @@ const welcomeMessage: UiMessage = {
   content: "我是 E小助，会基于固定流程知识库和附件证据回答问题，并附上引用来源。"
 };
 
+const fallbackDocumentLinks: NonNullable<ActiveKnowledgeResponse["documentLinks"]> = [
+  {
+    id: "new-staff-guide",
+    label: "新同事共享册",
+    url: "/api/docs/new-staff-guide",
+    available: true
+  },
+  {
+    id: "workflow-summary",
+    label: "流程教程汇总",
+    url: "/api/docs/workflow-summary",
+    available: true
+  }
+];
+
 function formatErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof TypeError && /fetch/i.test(error.message)) {
+    return fallback;
+  }
+
   return error instanceof Error ? error.message : fallback;
 }
 
@@ -76,10 +95,10 @@ export default function App() {
       }
     } catch (authError) {
       setAuth({
-        enabled: false,
-        authenticated: true
+        enabled: true,
+        authenticated: false
       });
-      setError(formatErrorMessage(authError, "读取认证状态失败"));
+      setError(formatErrorMessage(authError, "读取认证状态失败，请确认当前 Cloudflare 链接仍有效，然后刷新页面重试。"));
     }
   }
 
@@ -88,7 +107,9 @@ export default function App() {
       const payload = await fetchActiveKnowledge();
       setActive(payload);
     } catch (activeError) {
-      handleApiError(activeError, "读取知识库状态失败");
+      if (!handleApiError(activeError, "读取知识库状态失败，常用文档入口仍可使用。")) {
+        setActive((current) => current ?? { documentLinks: fallbackDocumentLinks });
+      }
     }
   }
 
@@ -108,7 +129,7 @@ export default function App() {
       setPassword("");
       await refreshActive();
     } catch (loginError) {
-      setError(formatErrorMessage(loginError, "登录失败"));
+      setError(formatErrorMessage(loginError, "登录失败，请确认当前 Cloudflare 链接仍有效。"));
     } finally {
       setAuthSubmitting(false);
     }
@@ -175,7 +196,7 @@ export default function App() {
     }
   }
 
-  const documentLinks = active?.documentLinks ?? [];
+  const documentLinks = active?.documentLinks ?? fallbackDocumentLinks;
 
   if (!auth) {
     return (
