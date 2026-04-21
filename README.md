@@ -164,3 +164,6 @@ vllm serve /home/kleist/Documents/Model/Qwen3.5-35B-A3B-FP8   --served-model-nam
 ## cloudfalre隧道
 cd /home/kleist/Documents/Code/corp_chatbot
 cloudflared tunnel --url http://localhost:5173 这里的port需要改成后端的，要不然没有密码页
+
+## 导出问题回答到.xlsx文件
+npm run export:sessions -- 20260420 /home/kleist/Desktop/session-qa-20260420.xlsx

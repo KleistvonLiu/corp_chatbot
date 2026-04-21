@@ -7,6 +7,7 @@
     "dev": "concurrently \"npm:dev:server\" \"npm:dev:web\"",
     "dev:server": "tsx watch server/main.ts",
     "dev:web": "vite",
+    "export:sessions": "tsx scripts/export-session-qa.ts",
     "normalize:legacy": "tsx scripts/normalize-legacy-workbook.ts",
     "build": "npm run build:server && npm run build:web",
     "build:server": "tsup server/main.ts --format esm --out-dir dist/server --target node22 --clean",
