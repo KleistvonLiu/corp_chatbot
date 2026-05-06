@@ -150,20 +150,27 @@ npm start
 
 ## 后端
 cd /home/kleist/Documents/Code/corp_chatbot
+
 npm run dev:server
 
 ## 前端
 cd /home/kleist/Documents/Code/corp_chatbot
+
 npm run dev:web
 
 ## llm
 conda activate vllm-qwen
+
 export LD_LIBRARY_PATH="$CONDA_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 vllm serve /home/kleist/Documents/Model/Qwen3.5-35B-A3B-FP8   --served-model-name qwen35   --host 127.0.0.1   --port 8000   --dtype auto   --tensor-parallel-size 1   --gpu-memory-utilization 0.90   --max-model-len 8192   --generation-config vllm
 
-## cloudfalre隧道
+## cloudflare隧道
 cd /home/kleist/Documents/Code/corp_chatbot
+
 cloudflared tunnel --url http://localhost:5173 这里的port需要改成后端的，要不然没有密码页
 
 ## 导出问题回答到.xlsx文件
 npm run export:sessions -- 20260420 /home/kleist/Desktop/session-qa-20260420.xlsx
+
+## 密码
+jecorp
